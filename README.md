@@ -34,12 +34,6 @@ cd /path/to/your/module
 ptyhelp -o /tmp/help.txt -target-file README.md -marker my-cli -- go run . --help
 ```
 
-## Release
-
-1. Create the GitHub repository `github.com/apstndb/ptyhelp` (empty, no README commit, or merge histories if needed).
-2. **Before pushing**, add `origin` and compare: `git remote add origin git@github.com:apstndb/ptyhelp.git` (once), then `git fetch origin` and `git diff origin/main` (after the first push, `origin/main` exists; on the very first push there is no remote branch yet—review with `git log` / `git show` instead).
-3. `git push -u origin main` and `git push origin v0.1.0` so `go run github.com/apstndb/ptyhelp@v0.1.0` resolves from the module proxy.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
