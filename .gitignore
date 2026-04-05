@@ -1,0 +1,4 @@
+/ptyhelp
+*.exe
+*.test
+.DS_Store
