@@ -15,25 +15,78 @@ There is **no default command** — you must pass the subprocess explicitly (e.g
 go install github.com/apstndb/ptyhelp@latest
 ```
 
-## Usage
+## Command reference (generated)
 
-```text
-ptyhelp run   [flags] command args...
-ptyhelp patch [flags] command args...
-ptyhelp help
+The blocks below are produced with **`ptyhelp patch`** so this README stays aligned with the binary. From the repository root:
+
+```bash
+make readme
 ```
+
+### Top-level (`ptyhelp help`)
+
+<!-- readme-help begin -->
+```text
+ptyhelp — run a command in a PTY, or patch a Markdown marker from command stdout.
+
+usage:
+  ptyhelp run   [flags] command args...
+  ptyhelp patch [flags] command args...
+  ptyhelp help
+
+Run from the module root when using go run . --help.
+```
+<!-- readme-help end -->
 
 ### `ptyhelp run`
 
-Runs the child **always** in a PTY (`-cols` / `-rows`, default 256×40).
+<!-- readme-run-help begin -->
+```text
+usage: ptyhelp run [flags] command args...
 
-| Flag | Meaning |
-|------|---------|
-| `-cols`, `-rows` | PTY size |
-| `-o path` | Write child stdout to a file instead of printing it |
-| `-normalize-eol MODE` | Normalize line endings: `none` (default), `lf`, `crlf` |
+  -cols uint
+    	PTY width in columns (default 256)
+  -normalize-eol string
+    	normalize line endings: none, lf, crlf (default "none")
+  -o string
+    	write child stdout to this file instead of printing it
+  -rows uint
+    	PTY height in rows (default 40)
 
-Example:
+Runs the command in a pseudo-terminal with the given size (Unix: stdout and stderr stay separate).
+```
+<!-- readme-run-help end -->
+
+### `ptyhelp patch`
+
+<!-- readme-patch-help begin -->
+```text
+usage: ptyhelp patch [flags] command args...
+
+  -cols uint
+    	PTY width (setting this flag implies PTY capture; cannot combine with -pty=false) (default 256)
+  -file string
+    	markdown file to patch (required)
+  -marker string
+    	HTML comment name between <!-- NAME begin --> and <!-- NAME end --> (default "cli-output")
+  -normalize-eol string
+    	normalize line endings: none, lf, crlf (default "none")
+  -o string
+    	also write child stdout to this file
+  -pty
+    	run in a pseudo-terminal (redundant if -cols or -rows is set)
+  -rows uint
+    	PTY height (setting this flag implies PTY capture; cannot combine with -pty=false) (default 40)
+
+Replaces the lines between <!-- MARKER begin --> and <!-- MARKER end --> with a fenced text block
+built from the command's stdout. Child stderr is copied to stderr when separated (e.g. on Unix or non-PTY mode).
+Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
+```
+<!-- readme-patch-help end -->
+
+## Examples
+
+### `ptyhelp run`
 
 ```bash
 cd /path/to/your/module
@@ -43,15 +96,6 @@ ptyhelp run -- go run . --help
 ### `ptyhelp patch`
 
 Requires **`-file`**. PTY-backed capture when **`-pty`** is set, or when **`-cols`** or **`-rows`** appears on the command line (those imply a PTY). **`-pty=false`** with **`-cols`/`-rows`** is an error.
-
-| Flag | Meaning |
-|------|---------|
-| `-file path` | Markdown file to patch (**required**) |
-| `-marker NAME` | Marker name (default `cli-output`) |
-| `-pty` | Run the child in a PTY (redundant if `-cols` or `-rows` is set) |
-| `-cols`, `-rows` | PTY size; **setting either implies PTY** (default 256×40 if omitted) |
-| `-o path` | Also write child stdout to this file |
-| `-normalize-eol MODE` | Line-ending normalization (CRLF vs LF). **none** (default) preserves raw output for **-o**, but for **patch** it matches the target file's perceived style (if consistent) to avoid mixed line endings; defaults to **LF** for mixed-EOL files. **lf** and **crlf** apply to captured stdout **and**, for **patch**, rewrite the **entire Markdown file on disk** to that EOL style (not only the fenced block). *Note: Standalone carriage returns (e.g. progress bars) are preserved internally, though leading/trailing whitespace and line endings from the captured output are trimmed before insertion. On non-Unix platforms, PTY capture may merge stderr into stdout.* |
 
 Example (go-flags help; `-cols` implies PTY):
 
