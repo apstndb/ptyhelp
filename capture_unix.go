@@ -49,7 +49,9 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:  true,
 		Setctty: true,
-		Ctty:    int(tty.Fd()),
+		// Setctty expects the descriptor number in the child process, not the
+		// parent's tty FD value. stdin is attached to tty as child fd 0.
+		Ctty: 0,
 	}
 
 	if err := cmd.Start(); err != nil {
