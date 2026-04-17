@@ -1,4 +1,4 @@
-package main
+package textutil
 
 import (
 	"bufio"
@@ -20,12 +20,13 @@ func newLineScanner(r io.Reader) *bufio.Scanner {
 	return s
 }
 
-// patchTargetFile replaces the lines strictly between <!-- marker begin --> and <!-- marker end -->
-// (exclusive of the marker lines) with a fenced ```text block containing out.
-// It applies EOL normalization to the patched Markdown written back to path: eolNone matches the
-// target file's perceived style (if consistent), defaulting to LF for mixed-EOL files; eolLF and
-// eolCRLF normalize the entire file to LF or CRLF (not only the inserted fenced block).
-func patchTargetFile(path string, out []byte, marker string, eol eolMode) error {
+// PatchMarkdownFile replaces the lines strictly between <!-- marker begin -->
+// and <!-- marker end --> (exclusive of the marker lines) with a fenced
+// ```text block containing out. It applies EOL normalization to the patched
+// Markdown written back to path: EOLNone matches the target file's perceived
+// style (if consistent), defaulting to LF for mixed-EOL files; EOLLF and
+// EOLCRLF normalize the entire file to LF or CRLF.
+func PatchMarkdownFile(path string, out []byte, marker string, eol EOLMode) error {
 	if marker == "" {
 		return fmt.Errorf("empty marker")
 	}
@@ -54,16 +55,7 @@ func patchTargetFile(path string, out []byte, marker string, eol eolMode) error 
 		return err
 	}
 
-	// Prepare the captured output for insertion into the fenced block.
-	// We normalize it to LF internally purely to simplify splitting and line
-	// manipulation. Standalone \r (e.g. progress-bar overwrites) is preserved.
-	// Trailing/leading whitespace and line endings from the captured output
-	// are trimmed before insertion.
-	//
-	// Note: The final style of the inserted content will be determined by the
-	// whole-file normalization at the end of this function (which respects
-	// the target file's perceived style in eolNone mode to avoid mixed EOLs).
-	textStr := string(bytes.TrimSpace(normalizeEOL(out, eolLF)))
+	textStr := string(bytes.TrimSpace(NormalizeEOL(out, EOLLF)))
 	textLines := strings.Split(textStr, "\n")
 	middle := append([]string{"```text"}, append(textLines, "```")...)
 
@@ -83,7 +75,7 @@ func patchTargetFile(path string, out []byte, marker string, eol eolMode) error 
 			b.WriteByte('\n')
 		case n > bi && n < ei:
 			// drop old fenced region between marker lines
-		default: // n >= ei
+		default:
 			b.WriteString(line)
 			b.WriteByte('\n')
 		}
@@ -100,12 +92,12 @@ func patchTargetFile(path string, out []byte, marker string, eol eolMode) error 
 
 	var finalOut []byte
 	switch {
-	case eol == eolNone && hasOnlyCRLF:
-		finalOut = normalizeEOL([]byte(s), eolCRLF)
-	case eol == eolNone:
+	case eol == EOLNone && hasOnlyCRLF:
+		finalOut = NormalizeEOL([]byte(s), EOLCRLF)
+	case eol == EOLNone:
 		finalOut = []byte(s)
-	default: // eolLF or eolCRLF
-		finalOut = normalizeEOL([]byte(s), eol)
+	default:
+		finalOut = NormalizeEOL([]byte(s), eol)
 	}
 	return os.WriteFile(path, finalOut, 0o644)
 }

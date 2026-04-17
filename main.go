@@ -15,6 +15,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/apstndb/ptyhelp/internal/textutil"
 )
 
 func main() {
@@ -136,7 +138,7 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 	subcommandHelpOnly(fs, args)
 	fs.Parse(args)
 
-	eol, err := parseEOLMode(*normEOL)
+	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ptyhelp run: %v\n", err)
 		os.Exit(1)
@@ -151,7 +153,7 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 	stdout, stderr, err := capturePTY(*cols, *rows, argv)
 	exitCode := captureExitCode("ptyhelp run", err)
 
-	stdout = normalizeEOL(stdout, eol)
+	stdout = textutil.NormalizeEOL(stdout, eol)
 
 	writeRunStdout("ptyhelp run", stdout, *outPath)
 	writeChildStderr("ptyhelp run", stderr)
@@ -183,7 +185,7 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	subcommandHelpOnly(fs, args)
 	fs.Parse(args)
 
-	eol, err := parseEOLMode(*normEOL)
+	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
 		os.Exit(1)
@@ -232,14 +234,14 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	}
 	exitCode := captureExitCode("ptyhelp patch", err)
 
-	stdout = normalizeEOL(stdout, eol)
+	stdout = textutil.NormalizeEOL(stdout, eol)
 
 	tp, err := filepath.Abs(*file)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
 		os.Exit(1)
 	}
-	if err := patchTargetFile(tp, stdout, *marker, eol); err != nil {
+	if err := textutil.PatchMarkdownFile(tp, stdout, *marker, eol); err != nil {
 		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
 		os.Exit(1)
 	}
