@@ -4,20 +4,13 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 func TestRunSubcommandPTY(t *testing.T) {
 	dir := moduleDir(t)
-	cmd := exec.Command("go", "run", ".", "run", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
-	cmd.Dir = dir
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("exit error: %v\n%s", err, out)
-	}
+	out := runTestCommand(t, dir, "go", "run", ".", "run", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
 	if got, want := string(out), "hello"; got != want {
 		t.Fatalf("unexpected output: got %q want %q", got, want)
 	}
@@ -31,13 +24,7 @@ func TestPatchSubcommandPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("go", "run", ".", "patch", "-file", target, "-marker", "T", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
-	cmd.Dir = dir
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("exit error: %v\n%s", err, out)
-	}
+	out := runTestCommand(t, dir, "go", "run", ".", "patch", "-file", target, "-marker", "T", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
 	if len(out) != 0 {
 		t.Fatalf("unexpected command output: %q", out)
 	}
