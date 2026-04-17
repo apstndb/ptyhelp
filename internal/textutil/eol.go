@@ -25,12 +25,12 @@ func ParseEOLMode(s string) (EOLMode, error) {
 	case "crlf":
 		return EOLCRLF, nil
 	default:
-		return EOLNone, fmt.Errorf("invalid -normalize-eol value %q (valid: none, lf, crlf)", s)
+		return EOLNone, fmt.Errorf("invalid EOL mode %q (valid: none, lf, crlf)", s)
 	}
 }
 
 // NormalizeEOL applies the given line-ending normalization to data.
-// EOLNone returns data unchanged.
+// EOLNone returns data unchanged. Standalone carriage returns are preserved.
 func NormalizeEOL(data []byte, mode EOLMode) []byte {
 	switch mode {
 	case EOLLF:
