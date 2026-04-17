@@ -10,7 +10,7 @@ import (
 	"github.com/apstndb/ptyhelp/internal/textutil"
 )
 
-func TestPatchTargetFile_EOLHandling(t *testing.T) {
+func TestPatchMarkdownFileEOLHandling(t *testing.T) {
 
 	tmpFile := filepath.Join(t.TempDir(), "target_test.md")
 
@@ -84,7 +84,7 @@ func TestPatchTargetFile_EOLHandling(t *testing.T) {
 	}
 }
 
-func TestPatchTargetFile_LongLine(t *testing.T) {
+func TestPatchMarkdownFileLongLine(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "longline.md")
 	// Longer than bufio.Scanner's default 64KiB max token; must not return ErrTooLong.
 	long := strings.Repeat("x", 70000)
