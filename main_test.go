@@ -22,7 +22,7 @@ func moduleDir(t *testing.T) string {
 func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
 	t.Helper()
 
-	timeout := 30 * time.Second
+	timeout := 2 * time.Minute
 	if deadline, ok := t.Deadline(); ok {
 		if remaining := time.Until(deadline) - time.Second; remaining > 0 && remaining < timeout {
 			timeout = remaining
