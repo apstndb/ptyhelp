@@ -101,6 +101,11 @@ func writeOptionalStdoutFile(prefix string, stdout []byte, outPath string) {
 	}
 }
 
+func exitInvalidEOLMode(prefix, value string) {
+	fmt.Fprintf(os.Stderr, "%s: invalid value for -normalize-eol: %q (valid: none, lf, crlf)\n", prefix, value)
+	os.Exit(1)
+}
+
 // subcommandHelpOnly handles -h/--help before flag.Parse. Only arguments before
 // the first "--" are considered so ptyhelp run -- ... does not treat the child's
 // flags as ptyhelp's.
@@ -140,8 +145,7 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 
 	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp run: %v\n", err)
-		os.Exit(1)
+		exitInvalidEOLMode("ptyhelp run", *normEOL)
 	}
 
 	argv := fs.Args()
@@ -187,8 +191,7 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
-		os.Exit(1)
+		exitInvalidEOLMode("ptyhelp patch", *normEOL)
 	}
 
 	var colsSet, rowsSet, ptyVisited bool
