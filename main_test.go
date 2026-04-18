@@ -24,7 +24,7 @@ func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
 
 	timeout := 2 * time.Minute
 	if deadline, ok := t.Deadline(); ok {
-		if remaining := time.Until(deadline) - time.Second; remaining > 0 && remaining < timeout {
+		if remaining := time.Until(deadline) - time.Second; remaining < timeout {
 			timeout = remaining
 		}
 	}
