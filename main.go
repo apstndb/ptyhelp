@@ -15,6 +15,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/apstndb/ptyhelp/internal/textutil"
 )
 
 func main() {
@@ -99,6 +101,11 @@ func writeOptionalStdoutFile(prefix string, stdout []byte, outPath string) {
 	}
 }
 
+func exitWithError(prefix string, err error) {
+	fmt.Fprintf(os.Stderr, "%s: %v\n", prefix, err)
+	os.Exit(1)
+}
+
 // subcommandHelpOnly handles -h/--help before flag.Parse. Only arguments before
 // the first "--" are considered so ptyhelp run -- ... does not treat the child's
 // flags as ptyhelp's.
@@ -136,10 +143,9 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 	subcommandHelpOnly(fs, args)
 	fs.Parse(args)
 
-	eol, err := parseEOLMode(*normEOL)
+	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp run: %v\n", err)
-		os.Exit(1)
+		exitWithError("ptyhelp run", fmt.Errorf("invalid value for -normalize-eol: %w", err))
 	}
 
 	argv := fs.Args()
@@ -151,7 +157,7 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 	stdout, stderr, err := capturePTY(*cols, *rows, argv)
 	exitCode := captureExitCode("ptyhelp run", err)
 
-	stdout = normalizeEOL(stdout, eol)
+	stdout = textutil.NormalizeEOL(stdout, eol)
 
 	writeRunStdout("ptyhelp run", stdout, *outPath)
 	writeChildStderr("ptyhelp run", stderr)
@@ -183,10 +189,9 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	subcommandHelpOnly(fs, args)
 	fs.Parse(args)
 
-	eol, err := parseEOLMode(*normEOL)
+	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
-		os.Exit(1)
+		exitWithError("ptyhelp patch", fmt.Errorf("invalid value for -normalize-eol: %w", err))
 	}
 
 	var colsSet, rowsSet, ptyVisited bool
@@ -232,16 +237,14 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	}
 	exitCode := captureExitCode("ptyhelp patch", err)
 
-	stdout = normalizeEOL(stdout, eol)
+	stdout = textutil.NormalizeEOL(stdout, eol)
 
 	tp, err := filepath.Abs(*file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
-		os.Exit(1)
+		exitWithError("ptyhelp patch", err)
 	}
-	if err := patchTargetFile(tp, stdout, *marker, eol); err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
-		os.Exit(1)
+	if err := textutil.PatchMarkdownFile(tp, stdout, *marker, eol); err != nil {
+		exitWithError("ptyhelp patch", err)
 	}
 
 	writeOptionalStdoutFile("ptyhelp patch", stdout, *outPath)
