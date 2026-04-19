@@ -109,7 +109,12 @@ func PatchMarkdownFile(path string, out []byte, marker string, eol EOLMode) erro
 	default:
 		finalOut = NormalizeEOL([]byte(s), eol)
 	}
-	return os.WriteFile(path, finalOut, 0o644)
+
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	return os.WriteFile(path, finalOut, mode)
 }
 
 // markerLineIndices returns the line numbers (0-based, bufio.ScanLines semantics)
