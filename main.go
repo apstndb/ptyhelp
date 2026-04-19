@@ -241,12 +241,10 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 	tp, err := filepath.Abs(*file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
-		os.Exit(1)
+		exitWithError("ptyhelp patch", err)
 	}
 	if err := textutil.PatchMarkdownFile(tp, stdout, *marker, eol); err != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
-		os.Exit(1)
+		exitWithError("ptyhelp patch", err)
 	}
 
 	writeOptionalStdoutFile("ptyhelp patch", stdout, *outPath)
