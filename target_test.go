@@ -113,16 +113,21 @@ func TestPatchMarkdownFilePreservesFileMode(t *testing.T) {
 	if err := os.Chmod(tmpFile, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMode := info.Mode().Perm()
 
 	if err := textutil.PatchMarkdownFile(tmpFile, []byte("ok\n"), "T", textutil.EOLNone); err != nil {
 		t.Fatalf("PatchMarkdownFile: %v", err)
 	}
 
-	info, err := os.Stat(tmpFile)
+	info, err = os.Stat(tmpFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+	if got, want := info.Mode().Perm(), wantMode; got != want {
 		t.Fatalf("PatchMarkdownFile mode = %o, want %o", got, want)
 	}
 }
