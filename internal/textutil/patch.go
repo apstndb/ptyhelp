@@ -110,11 +110,11 @@ func PatchMarkdownFile(path string, out []byte, marker string, eol EOLMode) erro
 		finalOut = NormalizeEOL([]byte(s), eol)
 	}
 
-	mode := os.FileMode(0o644)
-	if info, statErr := os.Stat(path); statErr == nil {
-		mode = info.Mode().Perm()
-	}
-	return os.WriteFile(path, finalOut, mode)
+	// The file already exists because we successfully read it above. os.WriteFile
+	// truncates and rewrites existing files in place without changing their mode,
+	// so the permission argument only matters if this ever stops requiring the
+	// target file to exist.
+	return os.WriteFile(path, finalOut, 0o644)
 }
 
 // markerLineIndices returns the line numbers (0-based, bufio.ScanLines semantics)

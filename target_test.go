@@ -103,3 +103,26 @@ func TestPatchMarkdownFileLongLine(t *testing.T) {
 		t.Fatalf("expected patched output to contain ok, got len %d", len(got))
 	}
 }
+
+func TestPatchMarkdownFilePreservesFileMode(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "mode.md")
+	base := []byte("a\n<!-- T begin -->\n<!-- T end -->\n")
+	if err := os.WriteFile(tmpFile, base, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tmpFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := textutil.PatchMarkdownFile(tmpFile, []byte("ok\n"), "T", textutil.EOLNone); err != nil {
+		t.Fatalf("PatchMarkdownFile: %v", err)
+	}
+
+	info, err := os.Stat(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("PatchMarkdownFile mode = %o, want %o", got, want)
+	}
+}
