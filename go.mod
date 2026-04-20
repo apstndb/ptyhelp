@@ -6,6 +6,7 @@ require (
 	github.com/aymanbagabas/go-pty v0.2.2
 	github.com/creack/pty v1.1.21
 	golang.org/x/sys v0.16.0
+	golang.org/x/term v0.15.0
 )
 
 require (

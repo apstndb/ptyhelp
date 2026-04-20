@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/term"
 )
 
 func TestRunSubcommandPTY(t *testing.T) {
@@ -51,6 +53,9 @@ func TestRunSubcommandPTYEOFOnEmptyStdin(t *testing.T) {
 }
 
 func TestRunSubcommandPTYPreservesTTYOnStdin(t *testing.T) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		t.Skip("parent stdin is not a terminal in this test environment")
+	}
 	dir := moduleDir(t)
 	out := runTestCommand(t, dir, "go", "run", ".", "run", "-cols", "120", "--", "/bin/sh", "-c", "if [ -t 0 ]; then printf tty0; else printf notty0; fi")
 	if got, want := string(out), "tty0"; got != want {
@@ -136,5 +141,26 @@ func TestRunSubcommandPTYPipedStdinPreservesBytes(t *testing.T) {
 		if field == "04" {
 			t.Fatalf("unexpected EOT byte in piped stdin output: %q", out)
 		}
+	}
+}
+
+func TestRunSubcommandPTYDevNullStdinDoesNotInjectEOT(t *testing.T) {
+	dir := moduleDir(t)
+	bin := buildTestBinary(t, dir)
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+
+	cmd := exec.Command(bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
+	cmd.Dir = dir
+	cmd.Stdin = devNull
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("unexpected command error: %v\n%s", err, out)
+	}
+	if len(strings.Fields(string(out))) != 0 {
+		t.Fatalf("unexpected bytes from /dev/null stdin: %q", out)
 	}
 }

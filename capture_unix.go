@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 // capturePTY runs argv with stdin and stdout on a PTY (fixed cols×rows) so tools that read
@@ -111,13 +112,9 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 }
 
 func childStdinForPTY(tty *os.File) (*os.File, int, bool, error) {
-	info, err := os.Stdin.Stat()
-	if err == nil && info.Mode()&os.ModeCharDevice == 0 {
-		// Preserve piped/file stdin bytes exactly; keep the PTY attached via stdout.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		// Preserve redirected stdin bytes exactly; keep the PTY attached via stdout.
 		return os.Stdin, 1, false, nil
-	}
-	if err != nil {
-		return nil, 0, false, err
 	}
 	return tty, 0, true, nil
 }
