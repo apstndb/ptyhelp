@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +115,26 @@ func TestPatchSubcommandDoesNotRewriteFileOnNonZeroExit(t *testing.T) {
 	}
 	if string(got) != base {
 		t.Fatalf("unexpected patched file after non-zero exit:\ngot:\n%s\nwant:\n%s", got, base)
+	}
+}
+
+func TestRunSubcommandPTYPipedStdinPreservesBytes(t *testing.T) {
+	dir := moduleDir(t)
+	bin := buildTestBinary(t, dir)
+	cmd := exec.Command(bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader("abc")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("unexpected command error: %v\n%s", err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 || fields[0] != "61" || fields[1] != "62" || fields[2] != "63" {
+		t.Fatalf("missing piped stdin bytes in output: %q", out)
+	}
+	for _, field := range fields {
+		if field == "04" {
+			t.Fatalf("unexpected EOT byte in piped stdin output: %q", out)
+		}
 	}
 }

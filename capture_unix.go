@@ -44,17 +44,24 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	if err != nil {
 		return nil, nil, err
 	}
+	stdin, ctty, sendEOF, err := childStdinForPTY(tty)
+	if err != nil {
+		_ = stderrR.Close()
+		_ = stderrW.Close()
+		return nil, nil, err
+	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdin = tty
+	cmd.Stdin = stdin
 	cmd.Stdout = tty
 	cmd.Stderr = stderrW
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:  true,
 		Setctty: true,
 		// Setctty expects the descriptor number in the child process, not the
-		// parent's tty FD value. stdin is attached to tty as child fd 0.
-		Ctty: 0,
+		// parent's tty FD value. childStdinForPTY selects which child fd refers
+		// to the slave PTY in this process layout.
+		Ctty: ctty,
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -62,7 +69,14 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 		_ = stderrW.Close()
 		return nil, nil, err
 	}
-	forwardPTYInput(master)
+	if sendEOF {
+		go func() {
+			// In PTY mode we buffer output rather than acting as an interactive
+			// terminal. When stdin is not redirected, inject the terminal EOF
+			// character so stdin-reading commands do not hang forever.
+			_, _ = master.Write([]byte{4})
+		}()
+	}
 	_ = tty.Close()
 	_ = stderrW.Close()
 
@@ -96,16 +110,14 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr
 }
 
-func forwardPTYInput(master *os.File) {
-	go func() {
-		info, err := os.Stdin.Stat()
-		if err == nil && info.Mode()&os.ModeCharDevice == 0 {
-			_, _ = io.Copy(master, os.Stdin)
-		}
-
-		// In PTY mode we buffer output instead of behaving interactively. Send the
-		// terminal EOF character so stdin-reading children do not hang forever when
-		// there is no redirected input left to forward.
-		_, _ = master.Write([]byte{4})
-	}()
+func childStdinForPTY(tty *os.File) (*os.File, int, bool, error) {
+	info, err := os.Stdin.Stat()
+	if err == nil && info.Mode()&os.ModeCharDevice == 0 {
+		// Preserve piped/file stdin bytes exactly; keep the PTY attached via stdout.
+		return os.Stdin, 1, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, err
+	}
+	return tty, 0, true, nil
 }
