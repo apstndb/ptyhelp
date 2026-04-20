@@ -126,12 +126,16 @@ func markerLineIndices(path string, data []byte, begin, end string) (bi, ei int,
 	n := 0
 	for sc.Scan() {
 		line := sc.Text()
-		if strings.Contains(line, begin) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == begin {
+			if bi >= 0 {
+				return -1, -1, fmt.Errorf("%s: duplicate begin marker %q", path, begin)
+			}
 			bi = n
 			n++
 			continue
 		}
-		if bi >= 0 && strings.Contains(line, end) {
+		if bi >= 0 && trimmed == end {
 			ei = n
 			break
 		}

@@ -36,6 +36,9 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	if err := pty.Setsize(tty, ws); err != nil {
 		return nil, nil, err
 	}
+	if err := disableTTYEcho(tty); err != nil {
+		return nil, nil, err
+	}
 
 	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
@@ -59,6 +62,7 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 		_ = stderrW.Close()
 		return nil, nil, err
 	}
+	forwardPTYInput(master)
 	_ = tty.Close()
 	_ = stderrW.Close()
 
@@ -76,9 +80,9 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	}()
 
 	waitErr := cmd.Wait()
-	wg.Wait()
 	_ = master.Close()
 	_ = stderrR.Close()
+	wg.Wait()
 
 	if outErr != nil && !errors.Is(outErr, syscall.EIO) && !errors.Is(outErr, os.ErrClosed) {
 		if waitErr == nil {
@@ -90,4 +94,18 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	}
 
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr
+}
+
+func forwardPTYInput(master *os.File) {
+	go func() {
+		info, err := os.Stdin.Stat()
+		if err == nil && info.Mode()&os.ModeCharDevice == 0 {
+			_, _ = io.Copy(master, os.Stdin)
+		}
+
+		// In PTY mode we buffer output instead of behaving interactively. Send the
+		// terminal EOF character so stdin-reading children do not hang forever when
+		// there is no redirected input left to forward.
+		_, _ = master.Write([]byte{4})
+	}()
 }

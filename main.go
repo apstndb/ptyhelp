@@ -60,7 +60,7 @@ func captureExitCode(prefix string, err error) int {
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode()
+		return exitCodeFromExitError(exitErr)
 	}
 	fmt.Fprintf(os.Stderr, "%s: %v\n", prefix, err)
 	os.Exit(1)
@@ -239,12 +239,14 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 	stdout = textutil.NormalizeEOL(stdout, eol)
 
-	tp, err := filepath.Abs(*file)
-	if err != nil {
-		exitWithError("ptyhelp patch", err)
-	}
-	if err := textutil.PatchMarkdownFile(tp, stdout, *marker, eol); err != nil {
-		exitWithError("ptyhelp patch", err)
+	if exitCode == 0 {
+		tp, err := filepath.Abs(*file)
+		if err != nil {
+			exitWithError("ptyhelp patch", err)
+		}
+		if err := textutil.PatchMarkdownFile(tp, stdout, *marker, eol); err != nil {
+			exitWithError("ptyhelp patch", err)
+		}
 	}
 
 	writeOptionalStdoutFile("ptyhelp patch", stdout, *outPath)
