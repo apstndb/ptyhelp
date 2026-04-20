@@ -71,11 +71,15 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 		return nil, nil, err
 	}
 	if sendEOF {
+		eofByte := byte(4)
+		if configuredEOF, eofErr := ptyEOFByte(tty); eofErr == nil {
+			eofByte = configuredEOF
+		}
 		go func() {
 			// In PTY mode we buffer output rather than acting as an interactive
-			// terminal. When stdin is not redirected, inject the terminal EOF
-			// character so stdin-reading commands do not hang forever.
-			_, _ = master.Write([]byte{4})
+			// terminal. When stdin is not redirected, inject the PTY's configured
+			// EOF character so stdin-reading commands do not hang forever.
+			_, _ = master.Write([]byte{eofByte})
 		}()
 	}
 	_ = tty.Close()

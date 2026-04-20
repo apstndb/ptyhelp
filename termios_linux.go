@@ -13,7 +13,15 @@ func disableTTYEcho(f *os.File) error {
 	if err != nil {
 		return err
 	}
-	copy := *termios
-	copy.Lflag &^= unix.ECHO
-	return unix.IoctlSetTermios(int(f.Fd()), unix.TCSETS, &copy)
+	termiosCopy := *termios
+	termiosCopy.Lflag &^= unix.ECHO
+	return unix.IoctlSetTermios(int(f.Fd()), unix.TCSETS, &termiosCopy)
+}
+
+func ptyEOFByte(f *os.File) (byte, error) {
+	termios, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
+	if err != nil {
+		return 0, err
+	}
+	return termios.Cc[unix.VEOF], nil
 }
