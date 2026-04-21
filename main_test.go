@@ -116,7 +116,12 @@ func TestRunSubcommandPropagatesExitCode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, bin, "run", "--", os.Args[0], "-test.run=TestHelperExit42")
+	helperBin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(ctx, bin, "run", "--", helperBin, "-test.run=TestHelperExit42")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_EXIT_42=1")
 	out, err := cmd.CombinedOutput()
