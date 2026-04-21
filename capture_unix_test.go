@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/creack/pty"
 	"golang.org/x/term"
 )
 
@@ -46,7 +47,21 @@ func TestPatchSubcommandPTY(t *testing.T) {
 
 func TestRunSubcommandPTYEOFOnEmptyStdin(t *testing.T) {
 	dir := moduleDir(t)
-	out := runTestCommand(t, dir, "go", "run", ".", "run", "-cols", "120", "--", "/bin/sh", "-c", "cat >/dev/null; printf done")
+	bin := buildTestBinary(t, dir)
+	stdinMaster, stdinSlave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdinMaster.Close()
+	defer stdinSlave.Close()
+
+	cmd := exec.Command(bin, "run", "-cols", "120", "--", "/bin/sh", "-c", "cat >/dev/null; printf done")
+	cmd.Dir = dir
+	cmd.Stdin = stdinSlave
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("unexpected command error: %v\n%s", err, out)
+	}
 	if got, want := string(out), "done"; got != want {
 		t.Fatalf("unexpected output: got %q want %q", got, want)
 	}
