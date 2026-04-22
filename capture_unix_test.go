@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -55,10 +56,16 @@ func TestRunSubcommandPTYEOFOnEmptyStdin(t *testing.T) {
 	defer stdinMaster.Close()
 	defer stdinSlave.Close()
 
-	cmd := exec.Command(bin, "run", "-cols", "120", "--", "/bin/sh", "-c", "cat >/dev/null; printf done")
+	ctx, cancel, timeout := testContext(t)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "run", "-cols", "120", "--", "/bin/sh", "-c", "cat >/dev/null; printf done")
 	cmd.Dir = dir
 	cmd.Stdin = stdinSlave
 	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
+	}
 	if err != nil {
 		t.Fatalf("unexpected command error: %v\n%s", err, out)
 	}
@@ -118,9 +125,15 @@ func TestPatchSubcommandDoesNotRewriteFileOnNonZeroExit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(bin, "patch", "-file", target, "-marker", "T", "--", "/bin/sh", "-c", "printf broken; exit 42")
+	ctx, cancel, timeout := testContext(t)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "patch", "-file", target, "-marker", "T", "--", "/bin/sh", "-c", "printf broken; exit 42")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
+	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		t.Fatalf("expected exit error, got %v\n%s", err, out)
@@ -141,10 +154,16 @@ func TestPatchSubcommandDoesNotRewriteFileOnNonZeroExit(t *testing.T) {
 func TestRunSubcommandPTYPipedStdinPreservesBytes(t *testing.T) {
 	dir := moduleDir(t)
 	bin := buildTestBinary(t, dir)
-	cmd := exec.Command(bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
+	ctx, cancel, timeout := testContext(t)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader("abc")
 	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
+	}
 	if err != nil {
 		t.Fatalf("unexpected command error: %v\n%s", err, out)
 	}
@@ -168,10 +187,16 @@ func TestRunSubcommandPTYDevNullStdinDoesNotInjectEOT(t *testing.T) {
 	}
 	defer devNull.Close()
 
-	cmd := exec.Command(bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
+	ctx, cancel, timeout := testContext(t)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
 	cmd.Dir = dir
 	cmd.Stdin = devNull
 	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
+	}
 	if err != nil {
 		t.Fatalf("unexpected command error: %v\n%s", err, out)
 	}

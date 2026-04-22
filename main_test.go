@@ -20,7 +20,7 @@ func moduleDir(t *testing.T) string {
 	return filepath.Dir(file)
 }
 
-func runTestCommandResult(t *testing.T, dir, name string, args ...string) ([]byte, error) {
+func testContext(t *testing.T) (context.Context, context.CancelFunc, time.Duration) {
 	t.Helper()
 
 	timeout := 2 * time.Minute
@@ -37,6 +37,13 @@ func runTestCommandResult(t *testing.T, dir, name string, args ...string) ([]byt
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return ctx, cancel, timeout
+}
+
+func runTestCommandResult(t *testing.T, dir, name string, args ...string) ([]byte, error) {
+	t.Helper()
+
+	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -101,19 +108,7 @@ func TestHelperExit42(t *testing.T) {
 func TestRunSubcommandPropagatesExitCode(t *testing.T) {
 	dir := moduleDir(t)
 	bin := buildTestBinary(t, dir)
-	timeout := 2 * time.Minute
-	if deadline, ok := t.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining > time.Second {
-			remaining -= time.Second
-		} else {
-			remaining = time.Millisecond
-		}
-		if remaining < timeout {
-			timeout = remaining
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
 	helperBin, err := os.Executable()
