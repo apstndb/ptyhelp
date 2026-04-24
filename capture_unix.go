@@ -45,12 +45,7 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	if err != nil {
 		return nil, nil, err
 	}
-	stdin, ctty, sendEOF, err := childStdinForPTY(tty)
-	if err != nil {
-		_ = stderrR.Close()
-		_ = stderrW.Close()
-		return nil, nil, err
-	}
+	stdin, ctty, sendEOF := childStdinForPTY(tty)
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = stdin
@@ -70,12 +65,19 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 		_ = stderrW.Close()
 		return nil, nil, err
 	}
+
+	var wg sync.WaitGroup
+	var outBuf, errBuf bytes.Buffer
+	var outErr, errErr error
+
 	if sendEOF {
 		eofByte := byte(4)
 		if configuredEOF, eofErr := ptyEOFByte(tty); eofErr == nil {
 			eofByte = configuredEOF
 		}
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			// In PTY mode we buffer output rather than acting as an interactive
 			// terminal. When stdin is not redirected, inject the PTY's configured
 			// EOF character so stdin-reading commands do not hang forever.
@@ -85,9 +87,6 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	_ = tty.Close()
 	_ = stderrW.Close()
 
-	var wg sync.WaitGroup
-	var outBuf, errBuf bytes.Buffer
-	var outErr, errErr error
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -115,10 +114,12 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr
 }
 
-func childStdinForPTY(tty *os.File) (*os.File, int, bool, error) {
+// childStdinForPTY selects the child's stdin source and controlling-terminal fd
+// based on whether the parent stdin is an actual terminal.
+func childStdinForPTY(tty *os.File) (*os.File, int, bool) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		// Preserve redirected stdin bytes exactly; keep the PTY attached via stdout.
-		return os.Stdin, 1, false, nil
+		return os.Stdin, 1, false
 	}
-	return tty, 0, true, nil
+	return tty, 0, true
 }
