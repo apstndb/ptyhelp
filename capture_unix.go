@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 // capturePTY runs argv with stdin and stdout on a PTY (fixed cols×rows) so tools that read
@@ -36,22 +37,27 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	if err := pty.Setsize(tty, ws); err != nil {
 		return nil, nil, err
 	}
+	if err := disableTTYEcho(tty); err != nil {
+		return nil, nil, err
+	}
 
 	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
 	}
+	stdin, ctty, sendEOF := childStdinForPTY(tty)
 
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdin = tty
+	cmd.Stdin = stdin
 	cmd.Stdout = tty
 	cmd.Stderr = stderrW
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:  true,
 		Setctty: true,
 		// Setctty expects the descriptor number in the child process, not the
-		// parent's tty FD value. stdin is attached to tty as child fd 0.
-		Ctty: 0,
+		// parent's tty FD value. childStdinForPTY selects which child fd refers
+		// to the slave PTY in this process layout.
+		Ctty: ctty,
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -59,12 +65,28 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 		_ = stderrW.Close()
 		return nil, nil, err
 	}
-	_ = tty.Close()
-	_ = stderrW.Close()
 
 	var wg sync.WaitGroup
 	var outBuf, errBuf bytes.Buffer
 	var outErr, errErr error
+
+	if sendEOF {
+		eofByte := byte(4)
+		if configuredEOF, eofErr := ptyEOFByte(tty); eofErr == nil {
+			eofByte = configuredEOF
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// In PTY mode we buffer output rather than acting as an interactive
+			// terminal. When stdin is not redirected, inject the PTY's configured
+			// EOF character so stdin-reading commands do not hang forever.
+			_, _ = master.Write([]byte{eofByte})
+		}()
+	}
+	_ = tty.Close()
+	_ = stderrW.Close()
+
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -76,9 +98,9 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	}()
 
 	waitErr := cmd.Wait()
-	wg.Wait()
 	_ = master.Close()
 	_ = stderrR.Close()
+	wg.Wait()
 
 	if outErr != nil && !errors.Is(outErr, syscall.EIO) && !errors.Is(outErr, os.ErrClosed) {
 		if waitErr == nil {
@@ -90,4 +112,14 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 	}
 
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr
+}
+
+// childStdinForPTY selects the child's stdin source and controlling-terminal fd
+// based on whether the parent stdin is an actual terminal.
+func childStdinForPTY(tty *os.File) (*os.File, int, bool) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		// Preserve redirected stdin bytes exactly; keep the PTY attached via stdout.
+		return os.Stdin, 1, false
+	}
+	return tty, 0, true
 }

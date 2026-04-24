@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -19,7 +20,7 @@ func moduleDir(t *testing.T) string {
 	return filepath.Dir(file)
 }
 
-func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
+func testContext(t *testing.T) (context.Context, context.CancelFunc, time.Duration) {
 	t.Helper()
 
 	timeout := 2 * time.Minute
@@ -36,6 +37,13 @@ func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return ctx, cancel, timeout
+}
+
+func runTestCommandResult(t *testing.T, dir, name string, args ...string) ([]byte, error) {
+	t.Helper()
+
+	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -46,9 +54,29 @@ func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
 		}
+	}
+	return out, err
+}
+
+func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
+	t.Helper()
+
+	out, err := runTestCommandResult(t, dir, name, args...)
+	if err != nil {
 		t.Fatalf("exit error: %v\n%s", err, out)
 	}
 	return out
+}
+
+func buildTestBinary(t *testing.T, dir string) string {
+	t.Helper()
+
+	bin := filepath.Join(t.TempDir(), "ptyhelp")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	runTestCommand(t, dir, "go", "build", "-o", bin, ".")
+	return bin
 }
 
 func TestSubcommandHelp(t *testing.T) {
@@ -67,5 +95,39 @@ func TestSubcommandHelp(t *testing.T) {
 				t.Fatal("expected usage output")
 			}
 		})
+	}
+}
+
+func TestHelperExit42(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_EXIT_42") != "1" {
+		return
+	}
+	os.Exit(42)
+}
+
+func TestRunSubcommandPropagatesExitCode(t *testing.T) {
+	dir := moduleDir(t)
+	bin := buildTestBinary(t, dir)
+	ctx, cancel, timeout := testContext(t)
+	defer cancel()
+
+	helperBin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(ctx, bin, "run", "--", helperBin, "-test.run=TestHelperExit42")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_EXIT_42=1")
+	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exit error, got %v\n%s", err, out)
+	}
+	if got, want := exitErr.ExitCode(), 42; got != want {
+		t.Fatalf("unexpected exit code: got %d want %d\n%s", got, want, out)
 	}
 }

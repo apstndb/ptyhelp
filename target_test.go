@@ -131,3 +131,40 @@ func TestPatchMarkdownFilePreservesFileMode(t *testing.T) {
 		t.Fatalf("PatchMarkdownFile mode = %o, want %o", got, want)
 	}
 }
+
+func TestPatchMarkdownFileRequiresExactMarkerLines(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "target_test.md")
+	base := []byte("before\nnot a marker <!-- T begin --> text\n<!-- T begin -->\nold\n<!-- T end -->\nafter\n")
+	if err := os.WriteFile(tmpFile, base, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := textutil.PatchMarkdownFile(tmpFile, []byte("hello\n"), "T", textutil.EOLNone); err != nil {
+		t.Fatalf("PatchMarkdownFile error: %v", err)
+	}
+
+	got, err := os.ReadFile(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("before\nnot a marker <!-- T begin --> text\n<!-- T begin -->\n```text\nhello\n```\n<!-- T end -->\nafter\n")
+	if !bytes.Equal(got, want) {
+		t.Fatalf("PatchMarkdownFile exact marker handling\ngot : %q\nwant: %q", got, want)
+	}
+}
+
+func TestPatchMarkdownFileRejectsDuplicateBeginMarker(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "duplicate_marker.md")
+	base := []byte("before\n<!-- T begin -->\nold\n<!-- T begin -->\nmore old\n<!-- T end -->\nafter\n")
+	if err := os.WriteFile(tmpFile, base, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := textutil.PatchMarkdownFile(tmpFile, []byte("hello\n"), "T", textutil.EOLNone)
+	if err == nil {
+		t.Fatal("expected duplicate begin marker error")
+	}
+	if !strings.Contains(err.Error(), "duplicate begin marker") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

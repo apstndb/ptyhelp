@@ -3,8 +3,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	gpty "github.com/aymanbagabas/go-pty"
 )
@@ -38,7 +40,7 @@ func capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err erro
 
 	out, readErr := io.ReadAll(p)
 	waitErr := cmd.Wait()
-	if readErr != nil && waitErr == nil {
+	if readErr != nil && !errors.Is(readErr, os.ErrClosed) && !errors.Is(readErr, io.EOF) && waitErr == nil {
 		waitErr = readErr
 	}
 	return out, nil, waitErr
