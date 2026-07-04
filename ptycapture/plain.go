@@ -1,22 +1,23 @@
-package main
+package ptycapture
 
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"sync"
 )
 
-// capturePlain runs argv with ordinary pipe I/O (no pseudo-terminal). The environment
-// is inherited from the parent; set COLUMNS/LINES yourself (shell, env) if a child needs them.
-func capturePlain(argv []string) (stdout, stderr []byte, err error) {
+// CapturePlain runs argv with ordinary pipe I/O (no pseudo-terminal).
+func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error) {
 	if len(argv) == 0 {
 		return nil, nil, fmt.Errorf("empty command")
 	}
 
-	cmd := exec.Command(argv[0], argv[1:]...)
+	ctx, cancel := opts.context()
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -32,28 +33,33 @@ func capturePlain(argv []string) (stdout, stderr []byte, err error) {
 		return nil, nil, err
 	}
 
+	kill := startKillWatcher(ctx, cmd, opts.KillAfter)
+
 	var wg sync.WaitGroup
 	var outBuf, errBuf bytes.Buffer
 	var outErr, errErr error
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, outErr = io.Copy(&outBuf, stdoutPipe)
+		outErr = copyLimited(&outBuf, stdoutPipe, opts.MaxOutputBytes)
 	}()
 	go func() {
 		defer wg.Done()
-		_, errErr = io.Copy(&errBuf, stderrPipe)
+		errErr = copyLimited(&errBuf, stderrPipe, opts.MaxOutputBytes)
 	}()
 
-	// Complete all reads before Wait (StdoutPipe/StderrPipe requirement).
 	wg.Wait()
 	waitErr := cmd.Wait()
+	kill()
 
 	if outErr != nil && waitErr == nil {
 		waitErr = outErr
 	}
 	if errErr != nil && waitErr == nil {
 		waitErr = errErr
+	}
+	if ctx.Err() != nil && waitErr == nil {
+		waitErr = ctx.Err()
 	}
 
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr

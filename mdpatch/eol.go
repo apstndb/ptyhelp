@@ -1,4 +1,4 @@
-package textutil
+package mdpatch
 
 import (
 	"bytes"
@@ -9,8 +9,11 @@ import (
 type EOLMode int
 
 const (
+	// EOLNone leaves line endings unchanged except where patch logic applies its own rules.
 	EOLNone EOLMode = iota
+	// EOLLF normalizes all line endings to LF.
 	EOLLF
+	// EOLCRLF normalizes all line endings to CRLF.
 	EOLCRLF
 )
 
@@ -25,19 +28,17 @@ func ParseEOLMode(s string) (EOLMode, error) {
 	case "crlf":
 		return EOLCRLF, nil
 	default:
-		return EOLNone, fmt.Errorf("invalid EOL mode %q (valid: none, lf, crlf)", s)
+		return EOLNone, fmt.Errorf("invalid -normalize-eol value %q (valid: none, lf, crlf)", s)
 	}
 }
 
 // NormalizeEOL applies the given line-ending normalization to data.
-// EOLNone returns data unchanged. Standalone carriage returns are preserved.
+// EOLNone returns data unchanged.
 func NormalizeEOL(data []byte, mode EOLMode) []byte {
 	switch mode {
 	case EOLLF:
 		return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	case EOLCRLF:
-		// First normalize to LF so we don't double up existing CRLF sequences,
-		// then convert all LF to CRLF.
 		tmp := bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 		return bytes.ReplaceAll(tmp, []byte("\n"), []byte("\r\n"))
 	default:
