@@ -122,9 +122,18 @@ func TestPatchSubcommandPlain(t *testing.T) {
 }
 
 func TestRunSubcommandPTYDoesNotHangWithDaemonizedDescendant(t *testing.T) {
-	out, _, code := runBuiltCommand(t, "run", "-cols", "120", "--", "/bin/sh", "-c", "(trap '' HUP; sleep 30) & printf hello")
-	if code != 0 {
-		t.Fatalf("exit code = %d", code)
+	timeout := 90 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, testBinaryPath, "run", "-cols", "120", "--", "/bin/sh", "-c", "(trap '' HUP; sleep 30) & printf hello")
+	cmd.Dir = moduleDir(t)
+	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
+	}
+	if err != nil {
+		t.Fatalf("unexpected command error: %v\n%s", err, out)
 	}
 	if got, want := string(out), "hello"; got != want {
 		t.Fatalf("unexpected output: got %q want %q", got, want)

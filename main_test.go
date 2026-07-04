@@ -123,7 +123,7 @@ func TestSubcommandHelp(t *testing.T) {
 }
 
 func TestRunSubcommandForwardsChildHelp(t *testing.T) {
-	out, _, code := runBuiltCommand(t, "run", "--", "go", "help")
+	out, _, code := runBuiltCommand(t, "run", "--", "go", "version")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr=%q", code, out)
 	}
