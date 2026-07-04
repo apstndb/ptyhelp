@@ -40,7 +40,7 @@ func main() {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintf(w, `ptyhelp — run a command in a PTY, or patch a Markdown marker from command stdout.
+	_, _ = fmt.Fprintf(w, `ptyhelp — run a command in a PTY, or patch a Markdown marker from command stdout.
 
 usage:
   ptyhelp run   [flags] command args...
@@ -133,15 +133,15 @@ func cmdRun(args []string) {
 	outPath := fs.String("o", "", "write child stdout to this file instead of printing it")
 	normEOL := fs.String("normalize-eol", "none", "normalize line endings: none, lf, crlf")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "usage: ptyhelp run [flags] command args...\n\n")
+		_, _ = fmt.Fprintf(fs.Output(), "usage: ptyhelp run [flags] command args...\n\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(fs.Output(), `
+		_, _ = fmt.Fprintf(fs.Output(), `
 Runs the command in a pseudo-terminal with the given size (Unix: stdout and stderr stay separate).
 
 `)
 	}
 	subcommandHelpOnly(fs, args)
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {
@@ -177,9 +177,9 @@ func cmdPatch(args []string) {
 	outPath := fs.String("o", "", "also write child stdout to this file")
 	normEOL := fs.String("normalize-eol", "none", "normalize line endings: none, lf, crlf")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "usage: ptyhelp patch [flags] command args...\n\n")
+		_, _ = fmt.Fprintf(fs.Output(), "usage: ptyhelp patch [flags] command args...\n\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(fs.Output(), `
+		_, _ = fmt.Fprintf(fs.Output(), `
 Replaces the lines between <!-- MARKER begin --> and <!-- MARKER end --> with a fenced text block
 built from the command's stdout. Child stderr is copied to stderr when separated (e.g. on Unix or non-PTY mode).
 Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
@@ -187,7 +187,7 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 `)
 	}
 	subcommandHelpOnly(fs, args)
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	eol, err := textutil.ParseEOLMode(*normEOL)
 	if err != nil {

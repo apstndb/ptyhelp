@@ -10,30 +10,44 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
 )
 
+func testContext(t *testing.T) (context.Context, context.CancelFunc, time.Duration) {
+	t.Helper()
+	timeout := 30 * time.Second
+	if deadline, ok := t.Deadline(); ok {
+		if remaining := time.Until(deadline) - time.Second; remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return ctx, cancel, timeout
+}
+
 func TestRunSubcommandPTY(t *testing.T) {
-	dir := moduleDir(t)
-	out := runTestCommand(t, dir, "go", "run", ".", "run", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
+	out, _, code := runBuiltCommand(t, "run", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
 	if got, want := string(out), "hello"; got != want {
 		t.Fatalf("unexpected output: got %q want %q", got, want)
 	}
 }
 
 func TestPatchSubcommandPTY(t *testing.T) {
-	dir := moduleDir(t)
 	target := filepath.Join(t.TempDir(), "README.md")
 	base := "before\n<!-- T begin -->\nold\n<!-- T end -->\nafter\n"
 	if err := os.WriteFile(target, []byte(base), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	out := runTestCommand(t, dir, "go", "run", ".", "patch", "-file", target, "-marker", "T", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
-	if len(out) != 0 {
-		t.Fatalf("unexpected command output: %q", out)
+	_, _, code := runBuiltCommand(t, "patch", "-file", target, "-marker", "T", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
 	}
 
 	got, err := os.ReadFile(target)
@@ -47,8 +61,6 @@ func TestPatchSubcommandPTY(t *testing.T) {
 }
 
 func TestRunSubcommandPTYEOFOnEmptyStdin(t *testing.T) {
-	dir := moduleDir(t)
-	bin := buildTestBinary(t, dir)
 	stdinMaster, stdinSlave, err := pty.Open()
 	if err != nil {
 		t.Fatal(err)
@@ -59,8 +71,8 @@ func TestRunSubcommandPTYEOFOnEmptyStdin(t *testing.T) {
 	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, bin, "run", "-cols", "120", "--", "/bin/sh", "-c", "cat >/dev/null; printf done")
-	cmd.Dir = dir
+	cmd := exec.CommandContext(ctx, testBinaryPath, "run", "-cols", "120", "--", "/bin/sh", "-c", "cat >/dev/null; printf done")
+	cmd.Dir = moduleDir(t)
 	cmd.Stdin = stdinSlave
 	out, err := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -78,24 +90,25 @@ func TestRunSubcommandPTYPreservesTTYOnStdin(t *testing.T) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		t.Skip("parent stdin is not a terminal in this test environment")
 	}
-	dir := moduleDir(t)
-	out := runTestCommand(t, dir, "go", "run", ".", "run", "-cols", "120", "--", "/bin/sh", "-c", "if [ -t 0 ]; then printf tty0; else printf notty0; fi")
+	out, _, code := runBuiltCommand(t, "run", "-cols", "120", "--", "/bin/sh", "-c", "if [ -t 0 ]; then printf tty0; else printf notty0; fi")
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
 	if got, want := string(out), "tty0"; got != want {
 		t.Fatalf("unexpected output: got %q want %q", got, want)
 	}
 }
 
 func TestPatchSubcommandPlain(t *testing.T) {
-	dir := moduleDir(t)
 	target := filepath.Join(t.TempDir(), "README.md")
 	base := "before\n<!-- T begin -->\nold\n<!-- T end -->\nafter\n"
 	if err := os.WriteFile(target, []byte(base), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	out := runTestCommand(t, dir, "go", "run", ".", "patch", "-file", target, "-marker", "T", "--", "/bin/sh", "-c", "printf hello")
-	if len(out) != 0 {
-		t.Fatalf("unexpected command output: %q", out)
+	_, _, code := runBuiltCommand(t, "patch", "-file", target, "-marker", "T", "--", "/bin/sh", "-c", "printf hello")
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
 	}
 
 	got, err := os.ReadFile(target)
@@ -109,16 +122,16 @@ func TestPatchSubcommandPlain(t *testing.T) {
 }
 
 func TestRunSubcommandPTYDoesNotHangWithDaemonizedDescendant(t *testing.T) {
-	dir := moduleDir(t)
-	out := runTestCommand(t, dir, "go", "run", ".", "run", "-cols", "120", "--", "/bin/sh", "-c", "(trap '' HUP; sleep 30) & printf hello")
+	out, _, code := runBuiltCommand(t, "run", "-cols", "120", "--", "/bin/sh", "-c", "(trap '' HUP; sleep 30) & printf hello")
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
 	if got, want := string(out), "hello"; got != want {
 		t.Fatalf("unexpected output: got %q want %q", got, want)
 	}
 }
 
 func TestPatchSubcommandDoesNotRewriteFileOnNonZeroExit(t *testing.T) {
-	dir := moduleDir(t)
-	bin := buildTestBinary(t, dir)
 	target := filepath.Join(t.TempDir(), "README.md")
 	base := "before\n<!-- T begin -->\nold\n<!-- T end -->\nafter\n"
 	if err := os.WriteFile(target, []byte(base), 0o644); err != nil {
@@ -128,8 +141,8 @@ func TestPatchSubcommandDoesNotRewriteFileOnNonZeroExit(t *testing.T) {
 	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, bin, "patch", "-file", target, "-marker", "T", "--", "/bin/sh", "-c", "printf broken; exit 42")
-	cmd.Dir = dir
+	cmd := exec.CommandContext(ctx, testBinaryPath, "patch", "-file", target, "-marker", "T", "--", "/bin/sh", "-c", "printf broken; exit 42")
+	cmd.Dir = moduleDir(t)
 	out, err := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		t.Fatalf("command timed out after %s: %v\n%s", timeout, err, out)
@@ -152,13 +165,11 @@ func TestPatchSubcommandDoesNotRewriteFileOnNonZeroExit(t *testing.T) {
 }
 
 func TestRunSubcommandPTYPipedStdinPreservesBytes(t *testing.T) {
-	dir := moduleDir(t)
-	bin := buildTestBinary(t, dir)
 	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
-	cmd.Dir = dir
+	cmd := exec.CommandContext(ctx, testBinaryPath, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
+	cmd.Dir = moduleDir(t)
 	cmd.Stdin = strings.NewReader("abc")
 	out, err := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -179,8 +190,6 @@ func TestRunSubcommandPTYPipedStdinPreservesBytes(t *testing.T) {
 }
 
 func TestRunSubcommandPTYDevNullStdinDoesNotInjectEOT(t *testing.T) {
-	dir := moduleDir(t)
-	bin := buildTestBinary(t, dir)
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Fatal(err)
@@ -190,8 +199,8 @@ func TestRunSubcommandPTYDevNullStdinDoesNotInjectEOT(t *testing.T) {
 	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, bin, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
-	cmd.Dir = dir
+	cmd := exec.CommandContext(ctx, testBinaryPath, "run", "-cols", "120", "--", "od", "-An", "-tx1", "-v")
+	cmd.Dir = moduleDir(t)
 	cmd.Stdin = devNull
 	out, err := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
