@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,6 +116,7 @@ func TestSubcommandHelp(t *testing.T) {
 		{"run", []string{"run", "--help"}},
 		{"run_short", []string{"run", "-h"}},
 		{"patch", []string{"patch", "--help"}},
+		{"version", []string{"version"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := runTestCommand(t, dir, testBinaryPath, tc.args...)
@@ -137,3 +139,29 @@ func TestRunSubcommandForwardsChildHelp(t *testing.T) {
 		t.Fatal("expected child help on stdout")
 	}
 }
+
+func TestPatchFenceNoneFromStdin(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "README.md")
+	base := "before\n<!-- T begin -->\nold\n<!-- T end -->\nafter\n"
+	if err := os.WriteFile(target, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(testBinaryPath, "patch", "-file", target, "-marker", "T", "-fence=none", "-")
+	cmd.Dir = moduleDir(t)
+	cmd.Stdin = strings.NewReader("raw body\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("patch failed: %v\n%s", err, out)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "before\n<!-- T begin -->\nraw body\n<!-- T end -->\nafter\n"
+	if string(got) != want {
+		t.Fatalf("unexpected patched file:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
