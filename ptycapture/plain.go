@@ -54,13 +54,15 @@ func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error
 
 	waitErr := waitForCommand(ctx, cmd, kill)
 	wg.Wait()
+	waitErr = preferLimitError(waitErr, outErr, errErr)
 
-	switch {
-	case outErr != nil:
+	if outErr != nil && waitErr == nil {
 		waitErr = outErr
-	case errErr != nil && waitErr == nil:
+	}
+	if errErr != nil && waitErr == nil {
 		waitErr = errErr
-	case ctx.Err() != nil && waitErr == nil:
+	}
+	if ctx.Err() != nil && waitErr == nil {
 		waitErr = ctx.Err()
 	}
 

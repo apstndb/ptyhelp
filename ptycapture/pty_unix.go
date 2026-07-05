@@ -109,13 +109,17 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	_ = master.Close()
 	_ = stderrR.Close()
 	wg.Wait()
+	waitErr = preferLimitError(waitErr, outErr, errErr)
 
-	switch {
-	case outErr != nil:
-		waitErr = outErr
-	case errErr != nil && !errors.Is(errErr, os.ErrClosed) && waitErr == nil:
+	if outErr != nil && !errors.Is(outErr, syscall.EIO) && !errors.Is(outErr, os.ErrClosed) {
+		if waitErr == nil {
+			waitErr = outErr
+		}
+	}
+	if errErr != nil && !errors.Is(errErr, os.ErrClosed) && waitErr == nil {
 		waitErr = errErr
-	case ctx.Err() != nil && waitErr == nil:
+	}
+	if ctx.Err() != nil && waitErr == nil {
 		waitErr = ctx.Err()
 	}
 

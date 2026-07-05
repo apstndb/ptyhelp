@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 )
 
 func copyLimited(dst *bytes.Buffer, src io.Reader, max int64, cancel context.CancelFunc) error {
@@ -20,4 +21,13 @@ func copyLimited(dst *bytes.Buffer, src io.Reader, max int64, cancel context.Can
 		return fmt.Errorf("output exceeded %d bytes", max)
 	}
 	return err
+}
+
+func preferLimitError(waitErr, outErr, errErr error) error {
+	for _, err := range []error{outErr, errErr} {
+		if err != nil && strings.Contains(err.Error(), "exceeded") {
+			return err
+		}
+	}
+	return waitErr
 }
