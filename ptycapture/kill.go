@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,8 @@ func startKillWatcher(ctx context.Context, cmd *exec.Cmd, killAfter time.Duratio
 		return func() {}
 	}
 	done := make(chan struct{})
+	var once sync.Once
+	stop := func() { once.Do(func() { close(done) }) }
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -30,5 +33,5 @@ func startKillWatcher(ctx context.Context, cmd *exec.Cmd, killAfter time.Duratio
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return stop
 }

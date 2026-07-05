@@ -92,6 +92,7 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	_ = stderrW.Close()
 
 	kill := startKillWatcherUnix(ctx, cmd, opts.KillAfter)
+	defer kill()
 
 	var outBuf, errBuf bytes.Buffer
 	var outErr, errErr error
@@ -139,6 +140,8 @@ func startKillWatcherUnix(ctx context.Context, cmd *exec.Cmd, killAfter time.Dur
 	}
 	pid := cmd.Process.Pid
 	done := make(chan struct{})
+	var once sync.Once
+	stop := func() { once.Do(func() { close(done) }) }
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -170,7 +173,7 @@ func startKillWatcherUnix(ctx context.Context, cmd *exec.Cmd, killAfter time.Dur
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return stop
 }
 
 // DrainPTYOutput reads remaining PTY output after process exit (exported for tests).

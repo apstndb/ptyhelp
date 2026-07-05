@@ -38,6 +38,7 @@ func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error
 	}
 
 	kill := startKillWatcher(ctx, cmd, opts.KillAfter)
+	defer kill()
 
 	var wg sync.WaitGroup
 	var outBuf, errBuf bytes.Buffer
