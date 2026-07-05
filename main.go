@@ -16,7 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/apstndb/ptyhelp/internal/textutil"
+	"github.com/apstndb/ptyhelp/mdpatch"
 )
 
 func main() {
@@ -143,9 +143,9 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 	subcommandHelpOnly(fs, args)
 	_ = fs.Parse(args)
 
-	eol, err := textutil.ParseEOLMode(*normEOL)
+	eol, err := mdpatch.ParseEOLMode(*normEOL)
 	if err != nil {
-		exitWithError("ptyhelp run", fmt.Errorf("invalid value for -normalize-eol: %w", err))
+		exitWithError("ptyhelp run", err)
 	}
 
 	argv := fs.Args()
@@ -157,7 +157,7 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 	stdout, stderr, err := capturePTY(*cols, *rows, argv)
 	exitCode := captureExitCode("ptyhelp run", err)
 
-	stdout = textutil.NormalizeEOL(stdout, eol)
+	stdout = mdpatch.NormalizeEOL(stdout, eol)
 
 	writeRunStdout("ptyhelp run", stdout, *outPath)
 	writeChildStderr("ptyhelp run", stderr)
@@ -189,9 +189,9 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	subcommandHelpOnly(fs, args)
 	_ = fs.Parse(args)
 
-	eol, err := textutil.ParseEOLMode(*normEOL)
+	eol, err := mdpatch.ParseEOLMode(*normEOL)
 	if err != nil {
-		exitWithError("ptyhelp patch", fmt.Errorf("invalid value for -normalize-eol: %w", err))
+		exitWithError("ptyhelp patch", err)
 	}
 
 	var colsSet, rowsSet, ptyVisited bool
@@ -237,14 +237,14 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	}
 	exitCode := captureExitCode("ptyhelp patch", err)
 
-	stdout = textutil.NormalizeEOL(stdout, eol)
+	stdout = mdpatch.NormalizeEOL(stdout, eol)
 
 	if exitCode == 0 {
 		tp, err := filepath.Abs(*file)
 		if err != nil {
 			exitWithError("ptyhelp patch", err)
 		}
-		if err := textutil.PatchMarkdownFile(tp, stdout, *marker, eol); err != nil {
+		if err := mdpatch.PatchMarkdownFile(tp, stdout, *marker, mdpatch.PatchOptions{EOL: eol, Fence: "text"}); err != nil {
 			exitWithError("ptyhelp patch", err)
 		}
 	}
