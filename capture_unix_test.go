@@ -16,18 +16,6 @@ import (
 	"golang.org/x/term"
 )
 
-func testContext(t *testing.T) (context.Context, context.CancelFunc, time.Duration) {
-	t.Helper()
-	timeout := 30 * time.Second
-	if deadline, ok := t.Deadline(); ok {
-		if remaining := time.Until(deadline) - time.Second; remaining > 0 && remaining < timeout {
-			timeout = remaining
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	return ctx, cancel, timeout
-}
-
 func TestRunSubcommandPTY(t *testing.T) {
 	out, _, code := runBuiltCommand(t, "run", "-cols", "120", "--", "/bin/sh", "-c", "printf hello")
 	if code != 0 {

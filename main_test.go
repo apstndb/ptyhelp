@@ -14,6 +14,10 @@ import (
 var testBinaryPath string
 
 func TestMain(m *testing.M) {
+	os.Exit(runTestMain(m))
+}
+
+func runTestMain(m *testing.M) int {
 	dir, err := os.MkdirTemp("", "ptyhelp-test-*")
 	if err != nil {
 		panic(err)
@@ -35,7 +39,7 @@ func TestMain(m *testing.M) {
 		panic("build test binary: " + err.Error() + "\n" + string(out))
 	}
 
-	os.Exit(m.Run())
+	return m.Run()
 }
 
 func moduleDir(t *testing.T) string {
@@ -47,17 +51,22 @@ func moduleDir(t *testing.T) string {
 	return filepath.Dir(file)
 }
 
-func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
+func testContext(t *testing.T) (context.Context, context.CancelFunc, time.Duration) {
 	t.Helper()
-
 	timeout := 30 * time.Second
 	if deadline, ok := t.Deadline(); ok {
 		if remaining := time.Until(deadline) - time.Second; remaining > 0 && remaining < timeout {
 			timeout = remaining
 		}
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return ctx, cancel, timeout
+}
+
+func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
+	t.Helper()
+
+	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -75,13 +84,7 @@ func runTestCommand(t *testing.T, dir, name string, args ...string) []byte {
 
 func runBuiltCommand(t *testing.T, args ...string) (stdout, stderr []byte, exitCode int) {
 	t.Helper()
-	timeout := 30 * time.Second
-	if deadline, ok := t.Deadline(); ok {
-		if remaining := time.Until(deadline) - time.Second; remaining > 0 && remaining < timeout {
-			timeout = remaining
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel, timeout := testContext(t)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, testBinaryPath, args...)
