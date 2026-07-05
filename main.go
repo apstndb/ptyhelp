@@ -145,7 +145,7 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 
 	eol, err := mdpatch.ParseEOLMode(*normEOL)
 	if err != nil {
-		exitWithError("ptyhelp run", fmt.Errorf("invalid value for -normalize-eol: %w", err))
+		exitWithError("ptyhelp run", err)
 	}
 
 	argv := fs.Args()
@@ -191,7 +191,7 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 	eol, err := mdpatch.ParseEOLMode(*normEOL)
 	if err != nil {
-		exitWithError("ptyhelp patch", fmt.Errorf("invalid value for -normalize-eol: %w", err))
+		exitWithError("ptyhelp patch", err)
 	}
 
 	var colsSet, rowsSet, ptyVisited bool
