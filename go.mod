@@ -1,6 +1,6 @@
 module github.com/apstndb/ptyhelp
 
-go 1.22.0
+go 1.25.0
 
 require (
 	github.com/aymanbagabas/go-pty v0.2.2
