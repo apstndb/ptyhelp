@@ -28,7 +28,7 @@ func ParseEOLMode(s string) (EOLMode, error) {
 	case "crlf":
 		return EOLCRLF, nil
 	default:
-		return EOLNone, fmt.Errorf("invalid -normalize-eol value %q (valid: none, lf, crlf)", s)
+		return EOLNone, fmt.Errorf("invalid EOL mode %q (valid: none, lf, crlf)", s)
 	}
 }
 

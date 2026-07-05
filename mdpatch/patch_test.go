@@ -318,6 +318,9 @@ func TestValidateMarker(t *testing.T) {
 	if err := ValidateMarker("readme-help"); err != nil {
 		t.Fatalf("valid marker: %v", err)
 	}
+	if err := ValidateMarker("a--b"); err == nil {
+		t.Fatal("expected error for -- in marker")
+	}
 	if err := ValidateMarker("bad name"); err == nil {
 		t.Fatal("expected error for space in marker")
 	}

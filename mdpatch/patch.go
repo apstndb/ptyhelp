@@ -38,7 +38,7 @@ func ParseFence(s string) (string, error) {
 		if r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_') {
 			continue
 		}
-		return "", fmt.Errorf("invalid -fence value %q (valid: text, none, or a language tag)", s)
+		return "", fmt.Errorf("invalid fence value %q (valid: text, none, or a language tag)", s)
 	}
 	return s, nil
 }
@@ -47,6 +47,9 @@ func ParseFence(s string) (string, error) {
 func ValidateMarker(marker string) error {
 	if marker == "" {
 		return fmt.Errorf("empty marker")
+	}
+	if strings.Contains(marker, "--") {
+		return fmt.Errorf("invalid marker %q (must not contain --)", marker)
 	}
 	for _, r := range marker {
 		if r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '.' || r == ':' || r == '-') {
@@ -94,8 +97,10 @@ func BuildPatchedContent(path string, data []byte, marker string, opts PatchOpti
 		case n == bi:
 			b.WriteString(line)
 			b.WriteByte('\n')
-			b.WriteString(strings.Join(middle, "\n"))
-			b.WriteByte('\n')
+			if len(middle) > 0 {
+				b.WriteString(strings.Join(middle, "\n"))
+				b.WriteByte('\n')
+			}
 		case n > bi && n < ei:
 			// drop old region between marker lines
 		default:
@@ -134,7 +139,10 @@ func PatchMarkdownFile(path string, out []byte, marker string, opts PatchOptions
 }
 
 func buildMiddleLines(textStr, fence string) []string {
-	textLines := strings.Split(textStr, "\n")
+	var textLines []string
+	if textStr != "" {
+		textLines = strings.Split(textStr, "\n")
+	}
 	if fence == "none" {
 		return textLines
 	}
@@ -145,7 +153,11 @@ func buildMiddleLines(textStr, fence string) []string {
 	f := fenceForContent(textStr)
 	openFence := f + lang
 	closeFence := f
-	return append([]string{openFence}, append(textLines, closeFence)...)
+	middle := make([]string, 0, len(textLines)+2)
+	middle = append(middle, openFence)
+	middle = append(middle, textLines...)
+	middle = append(middle, closeFence)
+	return middle
 }
 
 func detectEOLStyle(data []byte) (hasCRLF, hasBareLF bool) {
@@ -188,11 +200,13 @@ func markerLineIndices(path string, data []byte, begin, end string) (bi, ei int,
 	bi, ei = -1, -1
 	sc := newLineScanner(bytes.NewReader(data))
 	n := 0
+	beginBytes := []byte(begin)
+	endBytes := []byte(end)
 	for sc.Scan() {
-		line := sc.Text()
-		trimmed := strings.TrimSpace(line)
-		switch trimmed {
-		case begin:
+		line := sc.Bytes()
+		trimmed := bytes.TrimSpace(line)
+		switch {
+		case bytes.Equal(trimmed, beginBytes):
 			if bi >= 0 {
 				if ei >= 0 {
 					return -1, -1, fmt.Errorf("%s: duplicate marker block %q", path, begin)
@@ -200,7 +214,7 @@ func markerLineIndices(path string, data []byte, begin, end string) (bi, ei int,
 				return -1, -1, fmt.Errorf("%s: duplicate begin marker %q", path, begin)
 			}
 			bi = n
-		case end:
+		case bytes.Equal(trimmed, endBytes):
 			if bi < 0 {
 				return -1, -1, fmt.Errorf("%s: %q … %q block not found or invalid order", path, begin, end)
 			}
@@ -221,6 +235,9 @@ func markerLineIndices(path string, data []byte, begin, end string) (bi, ei int,
 }
 
 func atomicWriteFile(path string, data []byte) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
