@@ -292,6 +292,7 @@ Replaces the lines between <!-- MARKER begin --> and <!-- MARKER end --> with ca
 Use -fence=none for raw Markdown, or command "-" to read patch content from stdin.
 Child stderr is copied to stderr when separated (e.g. on Unix or non-PTY mode).
 The target file is not modified when the child exits non-zero.
+The -file target and -o output must refer to different files.
 With -check, -o is also checked for staleness and no files are written.
 With -dry-run, -o is accepted but not written; this combination will become an error in v0.3.
 Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
@@ -339,6 +340,15 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 	if *file == "" {
 		fmt.Fprintf(os.Stderr, "ptyhelp patch: -file is required\n")
+		os.Exit(1)
+	}
+	aliased, aliasErr := pathsReferToSameFile(*file, *outPath)
+	if aliasErr != nil {
+		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", aliasErr)
+		os.Exit(1)
+	}
+	if aliased {
+		fmt.Fprintln(os.Stderr, "ptyhelp patch: -file and -o must refer to different files")
 		os.Exit(1)
 	}
 
@@ -452,4 +462,24 @@ func checkOutputFile(path string, want []byte, enabled bool) (absPath string, st
 		return absPath, false, err
 	}
 	return absPath, !bytes.Equal(got, want), nil
+}
+
+func pathsReferToSameFile(targetPath, outputPath string) (bool, error) {
+	if outputPath == "" {
+		return false, nil
+	}
+	targetAbs, err := filepath.Abs(targetPath)
+	if err != nil {
+		return false, err
+	}
+	outputAbs, err := filepath.Abs(outputPath)
+	if err != nil {
+		return false, err
+	}
+	if filepath.Clean(targetAbs) == filepath.Clean(outputAbs) {
+		return true, nil
+	}
+	targetInfo, targetErr := os.Stat(targetAbs)
+	outputInfo, outputErr := os.Stat(outputAbs)
+	return targetErr == nil && outputErr == nil && os.SameFile(targetInfo, outputInfo), nil
 }

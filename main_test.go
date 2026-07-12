@@ -311,3 +311,75 @@ func TestPatchDryRunOutputFileRemainsNoWrite(t *testing.T) {
 		t.Fatal("dry-run modified -o output")
 	}
 }
+
+func TestPatchRejectsAliasedOutput(t *testing.T) {
+	for _, mode := range []string{"write", "check", "dry_run"} {
+		t.Run(mode, func(t *testing.T) {
+			target := filepath.Join(t.TempDir(), "README.md")
+			writeMarkerFile(t, target)
+			args := []string{"patch", "-file", target, "-marker", "T", "-o", target}
+			switch mode {
+			case "check":
+				args = append(args, "-check")
+			case "dry_run":
+				args = append(args, "-dry-run")
+			}
+			args = append(args, "--", filepath.Join(t.TempDir(), "missing-command"))
+
+			_, stderr, code := runBuiltCommand(t, args...)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1\nstderr=%s", code, stderr)
+			}
+			if !strings.Contains(string(stderr), "-file and -o must refer to different files") {
+				t.Fatalf("stderr = %q, want alias error", stderr)
+			}
+			if got := string(readTestFile(t, target)); got != markerFileBase {
+				t.Fatalf("aliased output changed target:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestPathsReferToSameFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	other := filepath.Join(dir, "other.md")
+	writeMarkerFile(t, target)
+	writeMarkerFile(t, other)
+
+	for _, tc := range []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "empty", output: "", want: false},
+		{name: "exact", output: target, want: true},
+		{name: "cleaned", output: filepath.Join(dir, ".", "target.md"), want: true},
+		{name: "distinct", output: other, want: false},
+		{name: "missing", output: filepath.Join(dir, "missing.md"), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := pathsReferToSameFile(target, tc.output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("pathsReferToSameFile() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	hardlink := filepath.Join(dir, "hardlink.md")
+	if err := os.Link(target, hardlink); err != nil {
+		t.Logf("hardlink test skipped: %v", err)
+	} else if got, err := pathsReferToSameFile(target, hardlink); err != nil || !got {
+		t.Fatalf("hardlink alias = %v, %v; want true, nil", got, err)
+	}
+
+	symlink := filepath.Join(dir, "symlink.md")
+	if err := os.Symlink(target, symlink); err != nil {
+		t.Logf("symlink test skipped: %v", err)
+	} else if got, err := pathsReferToSameFile(target, symlink); err != nil || !got {
+		t.Fatalf("symlink alias = %v, %v; want true, nil", got, err)
+	}
+}
