@@ -128,9 +128,6 @@ func TestSubcommandHelp(t *testing.T) {
 }
 
 func TestRunSubcommandForwardsChildHelp(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("PTY child forwarding is too slow under -race on Windows CI")
-	}
 	out, _, code := runBuiltCommand(t, "run", "--", "go", "version")
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr=%q", code, out)
@@ -164,4 +161,3 @@ func TestPatchFenceNoneFromStdin(t *testing.T) {
 		t.Fatalf("unexpected patched file:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
-
