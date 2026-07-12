@@ -38,14 +38,23 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	output, err := duplicateConPTYOutput(p)
+	// I/O goroutines own duplicate handles so ConPty.Close can safely close the
+	// originals while stdin finishes and final output drains to EOF.
+	input, err := duplicateConPTYPipe(p.InPipeWriteFd(), "conpty-input")
 	if err != nil {
+		_ = p.Close()
+		return nil, nil, err
+	}
+	output, err := duplicateConPTYPipe(p.OutPipeReadFd(), "conpty-output")
+	if err != nil {
+		_ = input.Close()
 		_ = p.Close()
 		return nil, nil, err
 	}
 
 	pid, handle, err := p.Spawn(argv[0], argv, nil)
 	if err != nil {
+		_ = input.Close()
 		_ = output.Close()
 		_ = p.Close()
 		return nil, nil, err
@@ -55,7 +64,7 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	proc := windows.Handle(handle)
 	defer windows.CloseHandle(proc)
 
-	startWindowsStdin(p)
+	startWindowsStdin(input)
 
 	var outBuf bytes.Buffer
 	var readErr error
@@ -87,17 +96,14 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	return outBuf.Bytes(), nil, waitErr
 }
 
-func duplicateConPTYOutput(p *conpty.ConPty) (*os.File, error) {
-	// ConPty.Close closes its output handle immediately after closing the
-	// pseudoconsole. Read through a duplicate so final buffered output can drain
-	// to EOF even when the original handle is closed concurrently.
+func duplicateConPTYPipe(handle uintptr, name string) (*os.File, error) {
 	process := windows.CurrentProcess()
-	var output windows.Handle
+	var duplicate windows.Handle
 	err := windows.DuplicateHandle(
 		process,
-		windows.Handle(p.OutPipeReadFd()),
+		windows.Handle(handle),
 		process,
-		&output,
+		&duplicate,
 		0,
 		false,
 		windows.DUPLICATE_SAME_ACCESS,
@@ -105,23 +111,24 @@ func duplicateConPTYOutput(p *conpty.ConPty) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.NewFile(uintptr(output), "conpty-output"), nil
+	return os.NewFile(uintptr(duplicate), name), nil
 }
 
-func startWindowsStdin(p *conpty.ConPty) {
+func startWindowsStdin(input *os.File) {
 	go func() {
+		defer input.Close()
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			_, _ = io.Copy(p, os.Stdin)
+			_, _ = io.Copy(input, os.Stdin)
 		}
-		_ = sendConPTYEOF(p)
+		_ = sendConPTYEOF(input)
 	}()
 }
 
-func sendConPTYEOF(p *conpty.ConPty) error {
+func sendConPTYEOF(input io.Writer) error {
 	// Windows console input recognizes Ctrl+Z followed by Enter as EOF when
 	// processed input is enabled. Closing the ConPTY input handle instead sends
 	// a control-close event that terminates still-running children.
-	_, err := p.Write([]byte{0x1a, '\r'})
+	_, err := input.Write([]byte{0x1a, '\r'})
 	return err
 }
 
