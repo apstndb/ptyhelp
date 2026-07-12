@@ -21,7 +21,7 @@ func unixCommandSignals(cmd *exec.Cmd) commandSignals {
 	}
 	pid := cmd.Process.Pid
 	pgid, err := syscall.Getpgid(pid)
-	if err != nil {
+	if err != nil || !safeProcessGroup(pgid) {
 		return commandSignals{
 			graceful: func() error { return cmd.Process.Signal(syscall.SIGTERM) },
 			force:    cmd.Process.Kill,
@@ -35,4 +35,12 @@ func unixCommandSignals(cmd *exec.Cmd) commandSignals {
 		force:     func() error { return signalGroup(syscall.SIGKILL) },
 		remaining: func() bool { return syscall.Kill(-pgid, 0) == nil },
 	}
+}
+
+func safeProcessGroup(pgid int) bool {
+	if pgid <= 1 {
+		return false
+	}
+	selfPGID, err := syscall.Getpgid(0)
+	return err == nil && pgid != selfPGID
 }

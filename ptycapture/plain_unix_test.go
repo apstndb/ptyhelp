@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -53,6 +54,21 @@ func TestCapturePlain_Timeout(t *testing.T) {
 	_, _, err := CapturePlain(Options{Timeout: 50 * time.Millisecond}, []string{"/bin/sh", "-c", "sleep 5"})
 	if err == nil {
 		t.Fatal("expected timeout error")
+	}
+}
+
+func TestSafeProcessGroup(t *testing.T) {
+	selfPGID, err := syscall.Getpgid(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pgid := range []int{0, 1, selfPGID} {
+		if safeProcessGroup(pgid) {
+			t.Fatalf("safeProcessGroup(%d) = true, want false", pgid)
+		}
+	}
+	if !safeProcessGroup(selfPGID + 1) {
+		t.Fatalf("safeProcessGroup(%d) = false, want true", selfPGID+1)
 	}
 }
 

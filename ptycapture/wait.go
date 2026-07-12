@@ -38,6 +38,9 @@ func waitForCommand(ctx context.Context, cmd *exec.Cmd, killAfter time.Duration,
 				return err
 			}
 			<-timer.C
+			if !signals.remaining() {
+				return err
+			}
 			if signals.force != nil {
 				_ = signals.force()
 			}
