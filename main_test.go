@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -159,5 +160,154 @@ func TestPatchFenceNoneFromStdin(t *testing.T) {
 	want := "before\n<!-- T begin -->\nraw body\n<!-- T end -->\nafter\n"
 	if string(got) != want {
 		t.Fatalf("unexpected patched file:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+const markerFileBase = "before\n<!-- T begin -->\nold\n<!-- T end -->\nafter\n"
+
+func writeMarkerFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(markerFileBase), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readTestFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func patchVersionArgs(target, output string, extra ...string) []string {
+	args := []string{"patch", "-file", target, "-marker", "T", "-o", output}
+	args = append(args, extra...)
+	return append(args, "--", testBinaryPath, "version")
+}
+
+func TestPatchDownstreamFlagCompositions(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra []string
+		fence string
+	}{
+		{name: "plain_raw", extra: []string{"-fence=none"}, fence: "none"},
+		{name: "pty_fenced_normalized", extra: []string{"-cols", "120", "-normalize-eol=lf"}, fence: "text"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "README.md")
+			output := filepath.Join(dir, "help.txt")
+			writeMarkerFile(t, target)
+
+			_, stderr, code := runBuiltCommand(t, patchVersionArgs(target, output, tc.extra...)...)
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr)
+			}
+
+			sidecar := readTestFile(t, output)
+			if bytes.Contains(sidecar, []byte("\r\n")) && tc.fence == "text" {
+				t.Fatalf("sidecar contains CRLF after normalization: %q", sidecar)
+			}
+			body := strings.TrimRight(string(sidecar), "\n")
+			if tc.fence == "text" {
+				body = "```text\n" + body + "\n```"
+			}
+			want := "before\n<!-- T begin -->\n" + body + "\n<!-- T end -->\nafter\n"
+			if got := string(readTestFile(t, target)); got != want {
+				t.Fatalf("patched target mismatch\ngot:\n%s\nwant:\n%s", got, want)
+			}
+		})
+	}
+}
+
+func TestPatchCheckOutputFile(t *testing.T) {
+	setup := func(t *testing.T) (target, output string, targetData, outputData []byte) {
+		t.Helper()
+		dir := t.TempDir()
+		target = filepath.Join(dir, "README.md")
+		output = filepath.Join(dir, "help.txt")
+		writeMarkerFile(t, target)
+		_, stderr, code := runBuiltCommand(t, patchVersionArgs(target, output, "-fence=none")...)
+		if code != 0 {
+			t.Fatalf("prepare exit code = %d, want 0\nstderr=%s", code, stderr)
+		}
+		return target, output, readTestFile(t, target), readTestFile(t, output)
+	}
+
+	t.Run("fresh", func(t *testing.T) {
+		target, output, targetData, outputData := setup(t)
+		_, stderr, code := runBuiltCommand(t, patchVersionArgs(target, output, "-check", "-fence=none")...)
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr)
+		}
+		if !bytes.Equal(readTestFile(t, target), targetData) || !bytes.Equal(readTestFile(t, output), outputData) {
+			t.Fatal("check mode modified generated files")
+		}
+	})
+
+	t.Run("stale", func(t *testing.T) {
+		target, output, targetData, _ := setup(t)
+		stale := []byte("stale\n")
+		if err := os.WriteFile(output, stale, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, code := runBuiltCommand(t, patchVersionArgs(target, output, "-check", "-fence=none")...)
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1\nstderr=%s", code, stderr)
+		}
+		if !strings.Contains(string(stderr), "is stale (-o)") {
+			t.Fatalf("stderr = %q, want stale -o message", stderr)
+		}
+		if !bytes.Equal(readTestFile(t, target), targetData) || !bytes.Equal(readTestFile(t, output), stale) {
+			t.Fatal("check mode modified stale files")
+		}
+	})
+
+	t.Run("missing", func(t *testing.T) {
+		target, output, targetData, _ := setup(t)
+		if err := os.Remove(output); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, code := runBuiltCommand(t, patchVersionArgs(target, output, "-check", "-fence=none")...)
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1\nstderr=%s", code, stderr)
+		}
+		if !strings.Contains(string(stderr), "is stale (-o)") {
+			t.Fatalf("stderr = %q, want stale -o message", stderr)
+		}
+		if !bytes.Equal(readTestFile(t, target), targetData) {
+			t.Fatal("check mode modified target")
+		}
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatalf("missing output was created: %v", err)
+		}
+	})
+}
+
+func TestPatchDryRunOutputFileRemainsNoWrite(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "README.md")
+	output := filepath.Join(dir, "help.txt")
+	writeMarkerFile(t, target)
+	outputData := []byte("existing sidecar\n")
+	if err := os.WriteFile(output, outputData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runBuiltCommand(t, patchVersionArgs(target, output, "-dry-run", "-fence=none")...)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr)
+	}
+	if len(stdout) == 0 {
+		t.Fatal("dry-run did not print the stale target")
+	}
+	if got := string(readTestFile(t, target)); got != markerFileBase {
+		t.Fatalf("dry-run modified target:\n%s", got)
+	}
+	if !bytes.Equal(readTestFile(t, output), outputData) {
+		t.Fatal("dry-run modified -o output")
 	}
 }

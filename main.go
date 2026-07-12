@@ -223,7 +223,7 @@ func cmdRun(args []string) {
 	stderrStr := fs.String("stderr", "separate", "stderr handling: separate, merge, or discard")
 	combined := fs.Bool("combined", false, "merge stderr into stdout (same as -stderr=merge)")
 	timeoutStr := fs.String("timeout", "", "maximum subprocess runtime (e.g. 30s, 5m)")
-	killAfterStr := fs.String("kill-after", "", "grace period after timeout before SIGKILL (e.g. 5s)")
+	killAfterStr := fs.String("kill-after", "", "grace period after timeout before forced termination (e.g. 5s)")
 	maxOut := fs.Int64("max-output-bytes", 0, "fail when stdout or stderr exceeds this many bytes (0 = unlimited)")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(fs.Output(), "usage: ptyhelp run [flags] command args...\n\n")
@@ -275,14 +275,14 @@ func cmdPatch(args []string) {
 	file := fs.String("file", "", "markdown file to patch (required)")
 	marker := fs.String("marker", "cli-output", "HTML comment name between <!-- NAME begin --> and <!-- NAME end -->")
 	fenceStr := fs.String("fence", "text", "fenced code block language: text, none, or a language tag")
-	outPath := fs.String("o", "", "also write child stdout to this file (skipped when the child exits non-zero)")
+	outPath := fs.String("o", "", "also write child stdout on success; -check verifies it and -dry-run does not write it")
 	normEOL := fs.String("normalize-eol", "none", "normalize line endings in the entire target file: none, lf, crlf")
-	check := fs.Bool("check", false, "exit 1 when the target file would change (CI staleness check)")
-	dryRun := fs.Bool("dry-run", false, "print the patched file to stdout when it would change, without writing")
+	check := fs.Bool("check", false, "exit 1 when the target file or -o output would change (CI staleness check)")
+	dryRun := fs.Bool("dry-run", false, "print the patched file to stdout when it would change; write neither it nor -o")
 	stderrStr := fs.String("stderr", "separate", "stderr handling: separate, merge, or discard")
 	combined := fs.Bool("combined", false, "merge stderr into stdout (same as -stderr=merge)")
 	timeoutStr := fs.String("timeout", "", "maximum subprocess runtime (e.g. 30s, 5m)")
-	killAfterStr := fs.String("kill-after", "", "grace period after timeout before SIGKILL (e.g. 5s)")
+	killAfterStr := fs.String("kill-after", "", "grace period after timeout before forced termination (e.g. 5s)")
 	maxOut := fs.Int64("max-output-bytes", 0, "fail when stdout or stderr exceeds this many bytes (0 = unlimited)")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(fs.Output(), "usage: ptyhelp patch [flags] command args...\n\n")
@@ -292,6 +292,8 @@ Replaces the lines between <!-- MARKER begin --> and <!-- MARKER end --> with ca
 Use -fence=none for raw Markdown, or command "-" to read patch content from stdin.
 Child stderr is copied to stderr when separated (e.g. on Unix or non-PTY mode).
 The target file is not modified when the child exits non-zero.
+With -check, -o is also checked for staleness and no files are written.
+With -dry-run, -o is accepted but not written; this combination will become an error in v0.3.
 Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 `)
@@ -395,17 +397,28 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 				fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", readErr)
 				os.Exit(1)
 			}
-			if !bytes.Equal(current, newContent) {
+			targetStale := !bytes.Equal(current, newContent)
+			outputPath, outputStale, outputErr := checkOutputFile(*outPath, stdout, *check)
+			if outputErr != nil {
+				fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", outputErr)
+				os.Exit(1)
+			}
+			if targetStale {
 				if *dryRun {
 					if _, err := os.Stdout.Write(newContent); err != nil {
 						fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
 						os.Exit(1)
 					}
 				}
-				if *check {
+			}
+			if *check && (targetStale || outputStale) {
+				if targetStale {
 					fmt.Fprintf(os.Stderr, "ptyhelp patch: %s is stale (marker %q)\n", tp, *marker)
-					os.Exit(1)
 				}
+				if outputStale {
+					fmt.Fprintf(os.Stderr, "ptyhelp patch: %s is stale (-o)\n", outputPath)
+				}
+				os.Exit(1)
 			}
 		} else {
 			if err := mdpatch.PatchMarkdownFile(tp, stdout, *marker, patchOpts); err != nil {
@@ -421,4 +434,22 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
+}
+
+func checkOutputFile(path string, want []byte, enabled bool) (absPath string, stale bool, err error) {
+	if !enabled || path == "" {
+		return "", false, nil
+	}
+	absPath, err = filepath.Abs(path)
+	if err != nil {
+		return "", false, err
+	}
+	got, err := os.ReadFile(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return absPath, true, nil
+		}
+		return absPath, false, err
+	}
+	return absPath, !bytes.Equal(got, want), nil
 }
