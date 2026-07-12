@@ -78,7 +78,7 @@ func CapturePTY(ctx context.Context, opts Options, argv []string) (stdout, stder
 		readErr = copyLimited(&outBuf, output, opts.MaxOutputBytes, cancel)
 	}()
 
-	waitErr := waitForProcess(ctx, proc, opts.KillAfter)
+	waitErr, canceled := waitForProcess(ctx, proc, opts.KillAfter)
 	closeDone := make(chan struct{})
 	go func() {
 		_ = p.Close()
@@ -92,7 +92,7 @@ func CapturePTY(ctx context.Context, opts Options, argv []string) (stdout, stder
 	if readErr != nil && waitErr == nil {
 		waitErr = readErr
 	}
-	if parentCtx.Err() != nil {
+	if canceled && parentCtx.Err() != nil && !isLimitError(waitErr) {
 		waitErr = parentCtx.Err()
 	}
 
@@ -135,7 +135,7 @@ func sendConPTYEOF(input io.Writer) error {
 	return err
 }
 
-func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Duration) error {
+func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Duration) (error, bool) {
 	done := make(chan error, 1)
 	go func() {
 		done <- waitProcess(h)
@@ -143,8 +143,13 @@ func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Durati
 
 	select {
 	case err := <-done:
-		return err
+		return err, false
 	case <-ctx.Done():
+		select {
+		case err := <-done:
+			return err, false
+		default:
+		}
 	}
 
 	if killAfter > 0 {
@@ -152,7 +157,7 @@ func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Durati
 		select {
 		case err := <-done:
 			timer.Stop()
-			return err
+			return err, true
 		case <-timer.C:
 		}
 	}
@@ -162,9 +167,9 @@ func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Durati
 	defer timer.Stop()
 	select {
 	case err := <-done:
-		return err
+		return err, true
 	case <-timer.C:
-		return ctx.Err()
+		return ctx.Err(), true
 	}
 }
 

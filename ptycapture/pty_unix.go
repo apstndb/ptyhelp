@@ -104,7 +104,7 @@ func CapturePTY(ctx context.Context, opts Options, argv []string) (stdout, stder
 		errErr = copyLimited(&errBuf, stderrR, opts.MaxOutputBytes, cancel)
 	}()
 
-	waitErr := waitForCommand(ctx, cmd, opts.KillAfter, unixCommandSignals(cmd))
+	waitErr, canceled := waitForCommand(ctx, cmd, opts.KillAfter, unixCommandSignals(cmd))
 	_ = master.Close()
 	_ = stderrR.Close()
 	wg.Wait()
@@ -118,7 +118,7 @@ func CapturePTY(ctx context.Context, opts Options, argv []string) (stdout, stder
 	if errErr != nil && !errors.Is(errErr, os.ErrClosed) && waitErr == nil {
 		waitErr = errErr
 	}
-	if parentCtx.Err() != nil {
+	if canceled && parentCtx.Err() != nil && !isLimitError(waitErr) {
 		waitErr = parentCtx.Err()
 	}
 

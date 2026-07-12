@@ -75,6 +75,20 @@ func TestCapturePlain_ExplicitCancellation(t *testing.T) {
 	}
 }
 
+func TestCapturePlain_CancellationAfterChildExitDoesNotReplaceSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := time.AfterFunc(50*time.Millisecond, cancel)
+	defer timer.Stop()
+	defer cancel()
+
+	// The background process retains the output pipes after the shell exits, so
+	// cancellation occurs while CapturePlain is performing its bounded drain.
+	_, _, err := CapturePlain(ctx, Options{}, []string{"/bin/sh", "-c", "sleep 1 & exit 0"})
+	if err != nil {
+		t.Fatalf("cancellation after child exit replaced success: %v", err)
+	}
+}
+
 func TestSafeProcessGroup(t *testing.T) {
 	selfPGID, err := syscall.Getpgid(0)
 	if err != nil {

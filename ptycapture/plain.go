@@ -67,7 +67,7 @@ func CapturePlain(ctx context.Context, opts Options, argv []string) (stdout, std
 		errErr = copyLimited(&errBuf, stderrR, opts.MaxOutputBytes, cancel)
 	}()
 
-	waitErr := waitForCommand(ctx, cmd, opts.KillAfter, plainCommandSignals(cmd))
+	waitErr, canceled := waitForCommand(ctx, cmd, opts.KillAfter, plainCommandSignals(cmd))
 	forcedDrainClose := waitForCopies(&wg, func() {
 		_ = stdoutR.Close()
 		_ = stderrR.Close()
@@ -82,7 +82,7 @@ func CapturePlain(ctx context.Context, opts Options, argv []string) (stdout, std
 	if errErr != nil && (!forcedDrainClose || !errors.Is(errErr, os.ErrClosed)) && waitErr == nil {
 		waitErr = errErr
 	}
-	if parentCtx.Err() != nil {
+	if canceled && parentCtx.Err() != nil && !isLimitError(waitErr) {
 		waitErr = parentCtx.Err()
 	}
 

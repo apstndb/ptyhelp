@@ -14,7 +14,7 @@ type commandSignals struct {
 	remaining func() bool
 }
 
-func waitForCommand(ctx context.Context, cmd *exec.Cmd, killAfter time.Duration, signals commandSignals) error {
+func waitForCommand(ctx context.Context, cmd *exec.Cmd, killAfter time.Duration, signals commandSignals) (error, bool) {
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
@@ -22,8 +22,15 @@ func waitForCommand(ctx context.Context, cmd *exec.Cmd, killAfter time.Duration,
 
 	select {
 	case err := <-done:
-		return err
+		return err, false
 	case <-ctx.Done():
+		// Prefer an exit that was already observable when cancellation won the
+		// outer select, whose ready cases are otherwise chosen at random.
+		select {
+		case err := <-done:
+			return err, false
+		default:
+		}
 	}
 
 	if killAfter > 0 {
@@ -35,16 +42,16 @@ func waitForCommand(ctx context.Context, cmd *exec.Cmd, killAfter time.Duration,
 		case err := <-done:
 			if signals.remaining == nil || !signals.remaining() {
 				timer.Stop()
-				return err
+				return err, true
 			}
 			<-timer.C
 			if !signals.remaining() {
-				return err
+				return err, true
 			}
 			if signals.force != nil {
 				_ = signals.force()
 			}
-			return err
+			return err, true
 		case <-timer.C:
 		}
 	}
@@ -57,8 +64,8 @@ func waitForCommand(ctx context.Context, cmd *exec.Cmd, killAfter time.Duration,
 	defer timer.Stop()
 	select {
 	case err := <-done:
-		return err
+		return err, true
 	case <-timer.C:
-		return ctx.Err()
+		return ctx.Err(), true
 	}
 }
