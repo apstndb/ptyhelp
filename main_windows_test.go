@@ -28,6 +28,22 @@ func TestRunSubcommandWindowsDrainsConPTYOutput(t *testing.T) {
 	}
 }
 
+func TestRunSubcommandWindowsSendsTerminalEOF(t *testing.T) {
+	_, stderr, code := runBuiltCommand(
+		t,
+		"run",
+		"--",
+		"powershell.exe",
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command",
+		"[Console]::In.ReadToEnd() | Out-Null",
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr=%q", code, stderr)
+	}
+}
+
 func TestRunSubcommandWindowsHonorsKillAfter(t *testing.T) {
 	const killAfter = 400 * time.Millisecond
 	started := time.Now()

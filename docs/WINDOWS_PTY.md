@@ -24,4 +24,9 @@ shutdown, output remains actively drained while the pseudoconsole closes. This
 ordering is required to avoid `ClosePseudoConsole` deadlocks on Windows versions
 before Windows 11 24H2.
 
+When input reaches EOF, `ptyhelp` sends the Windows console EOF sequence
+(`Ctrl+Z` followed by Enter) through ConPTY. It does not close the ConPTY input
+handle while the child is running, because that generates a control-close event
+and terminates the child.
+
 Unix builds continue to use `github.com/creack/pty`.

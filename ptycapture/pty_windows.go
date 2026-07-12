@@ -110,17 +110,19 @@ func duplicateConPTYOutput(p *conpty.ConPty) (*os.File, error) {
 
 func startWindowsStdin(p *conpty.ConPty) {
 	go func() {
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			_ = closeConPTYStdin(p)
-			return
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			_, _ = io.Copy(p, os.Stdin)
 		}
-		_, _ = io.Copy(p, os.Stdin)
-		_ = closeConPTYStdin(p)
+		_ = sendConPTYEOF(p)
 	}()
 }
 
-func closeConPTYStdin(p *conpty.ConPty) error {
-	return windows.CloseHandle(windows.Handle(p.InPipeWriteFd()))
+func sendConPTYEOF(p *conpty.ConPty) error {
+	// Windows console input recognizes Ctrl+Z followed by Enter as EOF when
+	// processed input is enabled. Closing the ConPTY input handle instead sends
+	// a control-close event that terminates still-running children.
+	_, err := p.Write([]byte{0x1a, '\r'})
+	return err
 }
 
 func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Duration) error {
