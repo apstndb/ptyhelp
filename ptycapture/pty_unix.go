@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -18,8 +17,9 @@ import (
 )
 
 // CapturePTY runs argv with stdin and stdout on a PTY (fixed cols×rows).
-// stderr is captured with a separate pipe.
-func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) {
+// stderr is captured with a separate pipe. A nil context is treated as
+// context.Background.
+func CapturePTY(ctx context.Context, opts Options, argv []string) (stdout, stderr []byte, err error) {
 	if len(argv) == 0 {
 		return nil, nil, fmt.Errorf("empty command")
 	}
@@ -31,8 +31,10 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 		return nil, nil, fmt.Errorf("cols/rows out of range")
 	}
 
-	ctx, parentCancel := opts.context()
-	defer parentCancel()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -116,8 +118,8 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	if errErr != nil && !errors.Is(errErr, os.ErrClosed) && waitErr == nil {
 		waitErr = errErr
 	}
-	if ctx.Err() != nil && waitErr == nil {
-		waitErr = ctx.Err()
+	if parentCtx.Err() != nil {
+		waitErr = parentCtx.Err()
 	}
 
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr
@@ -128,11 +130,4 @@ func childStdinForPTY(tty *os.File) (*os.File, int, bool) {
 		return os.Stdin, 1, false
 	}
 	return tty, 0, true
-}
-
-// DrainPTYOutput reads remaining PTY output after process exit (exported for tests).
-func DrainPTYOutput(r io.Reader) ([]byte, error) {
-	var buf bytes.Buffer
-	_, err := io.Copy(&buf, r)
-	return buf.Bytes(), err
 }

@@ -1,7 +1,6 @@
 package ptycapture
 
 import (
-	"context"
 	"fmt"
 	"time"
 )
@@ -51,25 +50,8 @@ func ApplyStderrMode(stdout, stderr []byte, mode StderrMode) ([]byte, []byte) {
 type Options struct {
 	Cols uint
 	Rows uint
-	// Ctx controls cancellation. A nil context uses context.Background.
-	Ctx context.Context
-	// Timeout limits subprocess runtime when greater than zero.
-	Timeout time.Duration
 	// KillAfter allows graceful termination before forcefully stopping the process.
 	KillAfter time.Duration
 	// MaxOutputBytes limits each captured output stream when greater than zero.
 	MaxOutputBytes int64
-}
-
-func (o Options) context() (context.Context, context.CancelFunc) {
-	if o.Ctx != nil {
-		if o.Timeout > 0 {
-			return context.WithTimeout(o.Ctx, o.Timeout)
-		}
-		return o.Ctx, func() {}
-	}
-	if o.Timeout > 0 {
-		return context.WithTimeout(context.Background(), o.Timeout)
-	}
-	return context.Background(), func() {}
 }

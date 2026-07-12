@@ -17,7 +17,8 @@ import (
 )
 
 // CapturePTY runs argv in a Windows ConPTY (combined stdout/stderr stream).
-func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) {
+// A nil context is treated as context.Background.
+func CapturePTY(ctx context.Context, opts Options, argv []string) (stdout, stderr []byte, err error) {
 	if len(argv) == 0 {
 		return nil, nil, fmt.Errorf("empty command")
 	}
@@ -29,8 +30,10 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	}
 	cols, rows := int(opts.Cols), int(opts.Rows)
 
-	ctx, parentCancel := opts.context()
-	defer parentCancel()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -89,8 +92,8 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	if readErr != nil && waitErr == nil {
 		waitErr = readErr
 	}
-	if ctx.Err() != nil && waitErr == nil {
-		waitErr = ctx.Err()
+	if parentCtx.Err() != nil {
+		waitErr = parentCtx.Err()
 	}
 
 	return outBuf.Bytes(), nil, waitErr

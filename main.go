@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -208,10 +209,28 @@ func (f captureFlags) options(cols, rows uint) ptycapture.Options {
 	return ptycapture.Options{
 		Cols:           cols,
 		Rows:           rows,
-		Timeout:        f.timeout,
 		KillAfter:      f.killAfter,
 		MaxOutputBytes: f.maxOutputBytes,
 	}
+}
+
+func (f captureFlags) context() (context.Context, context.CancelFunc) {
+	if f.timeout > 0 {
+		return context.WithTimeout(context.Background(), f.timeout)
+	}
+	return context.Background(), func() {}
+}
+
+func (f captureFlags) capturePTY(cols, rows uint, argv []string) (stdout, stderr []byte, err error) {
+	ctx, cancel := f.context()
+	defer cancel()
+	return ptycapture.CapturePTY(ctx, f.options(cols, rows), argv)
+}
+
+func (f captureFlags) capturePlain(cols, rows uint, argv []string) (stdout, stderr []byte, err error) {
+	ctx, cancel := f.context()
+	defer cancel()
+	return ptycapture.CapturePlain(ctx, f.options(cols, rows), argv)
 }
 
 func cmdRun(args []string) {
@@ -253,7 +272,7 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 		os.Exit(1)
 	}
 
-	stdout, stderr, err := ptycapture.CapturePTY(capFlags.options(*cols, *rows), argv)
+	stdout, stderr, err := capFlags.capturePTY(*cols, *rows, argv)
 	exitCode := captureExitCode("ptyhelp run", err, stderr)
 
 	stdout, stderr = ptycapture.ApplyStderrMode(stdout, stderr, capFlags.stderrMode)
@@ -375,11 +394,10 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 			os.Exit(1)
 		}
 	} else {
-		opts := capFlags.options(*cols, *rows)
 		if runInPTY {
-			stdout, stderr, err = ptycapture.CapturePTY(opts, argv)
+			stdout, stderr, err = capFlags.capturePTY(*cols, *rows, argv)
 		} else {
-			stdout, stderr, err = ptycapture.CapturePlain(opts, argv)
+			stdout, stderr, err = capFlags.capturePlain(*cols, *rows, argv)
 		}
 		exitCode = captureExitCode("ptyhelp patch", err, stderr)
 	}

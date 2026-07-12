@@ -14,13 +14,15 @@ import (
 const plainDrainTimeout = 100 * time.Millisecond
 
 // CapturePlain runs argv with ordinary pipe I/O (no pseudo-terminal).
-func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error) {
+// A nil context is treated as context.Background.
+func CapturePlain(ctx context.Context, opts Options, argv []string) (stdout, stderr []byte, err error) {
 	if len(argv) == 0 {
 		return nil, nil, fmt.Errorf("empty command")
 	}
-
-	ctx, parentCancel := opts.context()
-	defer parentCancel()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -80,8 +82,8 @@ func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error
 	if errErr != nil && (!forcedDrainClose || !errors.Is(errErr, os.ErrClosed)) && waitErr == nil {
 		waitErr = errErr
 	}
-	if ctx.Err() != nil && waitErr == nil {
-		waitErr = ctx.Err()
+	if parentCtx.Err() != nil {
+		waitErr = parentCtx.Err()
 	}
 
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr
