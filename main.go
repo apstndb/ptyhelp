@@ -415,14 +415,14 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 		}
 
 		if *check || *dryRun {
-			newContent, buildErr := mdpatch.BuildPatchedContent(tp, stdout, *marker, patchOpts)
-			if buildErr != nil {
-				fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", buildErr)
-				os.Exit(1)
-			}
 			current, readErr := os.ReadFile(tp)
 			if readErr != nil {
 				fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", readErr)
+				os.Exit(1)
+			}
+			newContent, buildErr := mdpatch.PatchBytes(current, stdout, *marker, patchOpts)
+			if buildErr != nil {
+				fmt.Fprintf(os.Stderr, "ptyhelp patch: %s: %v\n", tp, buildErr)
 				os.Exit(1)
 			}
 			targetStale := !bytes.Equal(current, newContent)
