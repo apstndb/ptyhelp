@@ -3,11 +3,15 @@ package ptycapture
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 )
+
+const plainDrainTimeout = 100 * time.Millisecond
 
 // CapturePlain runs argv with ordinary pipe I/O (no pseudo-terminal).
 func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error) {
@@ -23,22 +27,30 @@ func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Cancel = func() error { return nil }
 	cmd.Stdin = os.Stdin
+	configurePlainCommand(cmd)
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
 	}
-	stderrPipe, err := cmd.StderrPipe()
+	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		return nil, nil, err
 	}
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
 
 	if err := cmd.Start(); err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
 		return nil, nil, err
 	}
-
-	kill := startKillWatcher(ctx, cmd, opts.KillAfter)
-	defer kill()
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
 
 	var wg sync.WaitGroup
 	var outBuf, errBuf bytes.Buffer
@@ -46,21 +58,26 @@ func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		outErr = copyLimited(&outBuf, stdoutPipe, opts.MaxOutputBytes, cancel)
+		outErr = copyLimited(&outBuf, stdoutR, opts.MaxOutputBytes, cancel)
 	}()
 	go func() {
 		defer wg.Done()
-		errErr = copyLimited(&errBuf, stderrPipe, opts.MaxOutputBytes, cancel)
+		errErr = copyLimited(&errBuf, stderrR, opts.MaxOutputBytes, cancel)
 	}()
 
-	waitErr := waitForCommand(ctx, cmd, kill)
-	wg.Wait()
+	waitErr := waitForCommand(ctx, cmd, opts.KillAfter, plainCommandSignals(cmd))
+	forcedDrainClose := waitForCopies(&wg, func() {
+		_ = stdoutR.Close()
+		_ = stderrR.Close()
+	})
+	_ = stdoutR.Close()
+	_ = stderrR.Close()
 	waitErr = preferLimitError(waitErr, outErr, errErr)
 
-	if outErr != nil && waitErr == nil {
+	if outErr != nil && (!forcedDrainClose || !errors.Is(outErr, os.ErrClosed)) && waitErr == nil {
 		waitErr = outErr
 	}
-	if errErr != nil && waitErr == nil {
+	if errErr != nil && (!forcedDrainClose || !errors.Is(errErr, os.ErrClosed)) && waitErr == nil {
 		waitErr = errErr
 	}
 	if ctx.Err() != nil && waitErr == nil {
@@ -68,4 +85,23 @@ func CapturePlain(opts Options, argv []string) (stdout, stderr []byte, err error
 	}
 
 	return outBuf.Bytes(), errBuf.Bytes(), waitErr
+}
+
+func waitForCopies(wg *sync.WaitGroup, closeReaders func()) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(plainDrainTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return false
+	case <-timer.C:
+		closeReaders()
+		<-done
+		return true
+	}
 }

@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
@@ -91,9 +90,6 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	_ = tty.Close()
 	_ = stderrW.Close()
 
-	kill := startKillWatcherUnix(ctx, cmd, opts.KillAfter)
-	defer kill()
-
 	var outBuf, errBuf bytes.Buffer
 	var outErr, errErr error
 	wg.Add(2)
@@ -106,7 +102,7 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 		errErr = copyLimited(&errBuf, stderrR, opts.MaxOutputBytes, cancel)
 	}()
 
-	waitErr := waitForCommand(ctx, cmd, kill)
+	waitErr := waitForCommand(ctx, cmd, opts.KillAfter, unixCommandSignals(cmd))
 	_ = master.Close()
 	_ = stderrR.Close()
 	wg.Wait()
@@ -132,48 +128,6 @@ func childStdinForPTY(tty *os.File) (*os.File, int, bool) {
 		return os.Stdin, 1, false
 	}
 	return tty, 0, true
-}
-
-func startKillWatcherUnix(ctx context.Context, cmd *exec.Cmd, killAfter time.Duration) func() {
-	if cmd.Process == nil {
-		return func() {}
-	}
-	pid := cmd.Process.Pid
-	done := make(chan struct{})
-	var once sync.Once
-	stop := func() { once.Do(func() { close(done) }) }
-	go func() {
-		select {
-		case <-ctx.Done():
-			pgid, err := syscall.Getpgid(pid)
-			if killAfter > 0 {
-				if err == nil {
-					_ = syscall.Kill(-pgid, syscall.SIGTERM)
-				} else {
-					_ = cmd.Process.Signal(syscall.SIGTERM)
-				}
-				timer := time.NewTimer(killAfter)
-				select {
-				case <-timer.C:
-					if pgid, err := syscall.Getpgid(pid); err == nil {
-						_ = syscall.Kill(-pgid, syscall.SIGKILL)
-					} else {
-						_ = cmd.Process.Kill()
-					}
-				case <-done:
-					timer.Stop()
-				}
-			} else {
-				if err == nil {
-					_ = syscall.Kill(-pgid, syscall.SIGKILL)
-				} else {
-					_ = cmd.Process.Kill()
-				}
-			}
-		case <-done:
-		}
-	}()
-	return stop
 }
 
 // DrainPTYOutput reads remaining PTY output after process exit (exported for tests).

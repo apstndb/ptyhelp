@@ -49,11 +49,15 @@ func ApplyStderrMode(stdout, stderr []byte, mode StderrMode) ([]byte, []byte) {
 
 // Options configures subprocess capture.
 type Options struct {
-	Cols           uint
-	Rows           uint
-	Ctx            context.Context
-	Timeout        time.Duration
-	KillAfter      time.Duration
+	Cols uint
+	Rows uint
+	// Ctx controls cancellation. A nil context uses context.Background.
+	Ctx context.Context
+	// Timeout limits subprocess runtime when greater than zero.
+	Timeout time.Duration
+	// KillAfter allows graceful termination before forcefully stopping the process.
+	KillAfter time.Duration
+	// MaxOutputBytes limits each captured output stream when greater than zero.
 	MaxOutputBytes int64
 }
 

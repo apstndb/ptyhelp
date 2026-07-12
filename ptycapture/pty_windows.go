@@ -38,10 +38,25 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	defer p.Close()
+	// I/O goroutines own duplicate handles so ConPty.Close can safely close the
+	// originals while stdin finishes and final output drains to EOF.
+	input, err := duplicateConPTYPipe(p.InPipeWriteFd(), "conpty-input")
+	if err != nil {
+		_ = p.Close()
+		return nil, nil, err
+	}
+	output, err := duplicateConPTYPipe(p.OutPipeReadFd(), "conpty-output")
+	if err != nil {
+		_ = input.Close()
+		_ = p.Close()
+		return nil, nil, err
+	}
 
 	pid, handle, err := p.Spawn(argv[0], argv, nil)
 	if err != nil {
+		_ = input.Close()
+		_ = output.Close()
+		_ = p.Close()
 		return nil, nil, err
 	}
 	_ = pid
@@ -49,9 +64,7 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	proc := windows.Handle(handle)
 	defer windows.CloseHandle(proc)
 
-	startWindowsStdin(p)
-
-	stopKill := startKillWatcherWindows(ctx, proc)
+	startWindowsStdin(input)
 
 	var outBuf bytes.Buffer
 	var readErr error
@@ -59,11 +72,18 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		readErr = copyLimited(&outBuf, p, opts.MaxOutputBytes, cancel)
+		readErr = copyLimited(&outBuf, output, opts.MaxOutputBytes, cancel)
 	}()
 
-	waitErr := waitForProcess(ctx, proc, stopKill)
+	waitErr := waitForProcess(ctx, proc, opts.KillAfter)
+	closeDone := make(chan struct{})
+	go func() {
+		_ = p.Close()
+		close(closeDone)
+	}()
 	wg.Wait()
+	_ = output.Close()
+	<-closeDone
 	waitErr = preferLimitError(waitErr, readErr, nil)
 
 	if readErr != nil && waitErr == nil {
@@ -76,36 +96,43 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	return outBuf.Bytes(), nil, waitErr
 }
 
-func startWindowsStdin(p *conpty.ConPty) {
+func duplicateConPTYPipe(handle uintptr, name string) (*os.File, error) {
+	process := windows.CurrentProcess()
+	var duplicate windows.Handle
+	err := windows.DuplicateHandle(
+		process,
+		windows.Handle(handle),
+		process,
+		&duplicate,
+		0,
+		false,
+		windows.DUPLICATE_SAME_ACCESS,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(duplicate), name), nil
+}
+
+func startWindowsStdin(input *os.File) {
 	go func() {
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			_ = closeConPTYStdin(p)
-			return
+		defer input.Close()
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			_, _ = io.Copy(input, os.Stdin)
 		}
-		_, _ = io.Copy(p, os.Stdin)
-		_ = closeConPTYStdin(p)
+		_ = sendConPTYEOF(input)
 	}()
 }
 
-func closeConPTYStdin(p *conpty.ConPty) error {
-	return windows.CloseHandle(windows.Handle(p.InPipeWriteFd()))
+func sendConPTYEOF(input io.Writer) error {
+	// Windows console input recognizes Ctrl+Z followed by Enter as EOF when
+	// processed input is enabled. Closing the ConPTY input handle instead sends
+	// a control-close event that terminates still-running children.
+	_, err := input.Write([]byte{0x1a, '\r'})
+	return err
 }
 
-func startKillWatcherWindows(ctx context.Context, proc windows.Handle) func() {
-	done := make(chan struct{})
-	var once sync.Once
-	stop := func() { once.Do(func() { close(done) }) }
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = windows.TerminateProcess(proc, 1)
-		case <-done:
-		}
-	}()
-	return stop
-}
-
-func waitForProcess(ctx context.Context, h windows.Handle, stopKill func()) error {
+func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Duration) error {
 	done := make(chan error, 1)
 	go func() {
 		done <- waitProcess(h)
@@ -113,18 +140,28 @@ func waitForProcess(ctx context.Context, h windows.Handle, stopKill func()) erro
 
 	select {
 	case err := <-done:
-		stopKill()
 		return err
 	case <-ctx.Done():
-		_ = windows.TerminateProcess(h, 1)
+	}
+
+	if killAfter > 0 {
+		timer := time.NewTimer(killAfter)
 		select {
 		case err := <-done:
-			stopKill()
+			timer.Stop()
 			return err
-		case <-time.After(5 * time.Second):
-			stopKill()
-			return ctx.Err()
+		case <-timer.C:
 		}
+	}
+
+	_ = windows.TerminateProcess(h, 1)
+	timer := time.NewTimer(forceKillWait)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return ctx.Err()
 	}
 }
 
