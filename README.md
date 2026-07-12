@@ -107,6 +107,7 @@ Replaces the lines between <!-- MARKER begin --> and <!-- MARKER end --> with ca
 Use -fence=none for raw Markdown, or command "-" to read patch content from stdin.
 Child stderr is copied to stderr when separated (e.g. on Unix or non-PTY mode).
 The target file is not modified when the child exits non-zero.
+The -file target and -o output must refer to different files.
 With -check, -o is also checked for staleness and no files are written.
 With -dry-run, -o is accepted but not written; this combination will become an error in v0.3.
 Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
