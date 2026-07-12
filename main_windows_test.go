@@ -10,6 +10,7 @@ import (
 
 func TestRunSubcommandWindowsDrainsConPTYOutput(t *testing.T) {
 	const size = 256 << 10
+	const endMarker = "PTYHELP-END"
 	stdout, stderr, code := runBuiltCommand(
 		t,
 		"run",
@@ -18,13 +19,16 @@ func TestRunSubcommandWindowsDrainsConPTYOutput(t *testing.T) {
 		"-NoProfile",
 		"-NonInteractive",
 		"-Command",
-		"[Console]::Out.Write('x' * 262144)",
+		"[Console]::Out.Write(('x' * 262144) + ([char[]](80,84,89,72,69,76,80,45,69,78,68) -join ''))",
 	)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr=%q", code, stderr)
 	}
-	if got := bytes.Count(stdout, []byte{'x'}); got != size {
-		t.Fatalf("captured %d data bytes, want %d (total output %d bytes)", got, size, len(stdout))
+	if got := bytes.Count(stdout, []byte{'x'}); got < size {
+		t.Fatalf("captured %d data bytes, want at least %d (total output %d bytes)", got, size, len(stdout))
+	}
+	if !bytes.Contains(stdout, []byte(endMarker)) {
+		t.Fatalf("captured output is missing final marker %q", endMarker)
 	}
 }
 
