@@ -93,7 +93,7 @@ usage: ptyhelp patch [flags] command args...
   -normalize-eol string
     	normalize line endings in the entire target file: none, lf, crlf (default "none")
   -o string
-    	also write child stdout on success; -check verifies it and -dry-run does not write it
+    	also write child stdout on success; -check verifies it; incompatible with -dry-run
   -pty
     	run in a pseudo-terminal (redundant if -cols or -rows is set)
   -rows uint
@@ -109,7 +109,7 @@ Child stderr is copied to stderr when separated (e.g. on Unix or non-PTY mode).
 The target file is not modified when the child exits non-zero.
 The -file target and -o output must refer to different files.
 With -check, -o is also checked for staleness and no files are written.
-With -dry-run, -o is accepted but not written; this combination will become an error in v0.3.
+With -dry-run, -o is rejected because dry-run output is reserved for the patched file.
 Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 ```
 <!-- readme-patch-help end -->

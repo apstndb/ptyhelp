@@ -17,7 +17,8 @@ import (
 )
 
 // CapturePTY runs argv in a Windows ConPTY (combined stdout/stderr stream).
-func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) {
+// A nil context is treated as context.Background.
+func CapturePTY(ctx context.Context, opts Options, argv []string) (stdout, stderr []byte, err error) {
 	if len(argv) == 0 {
 		return nil, nil, fmt.Errorf("empty command")
 	}
@@ -29,8 +30,10 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	}
 	cols, rows := int(opts.Cols), int(opts.Rows)
 
-	ctx, parentCancel := opts.context()
-	defer parentCancel()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	parentCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -75,7 +78,7 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 		readErr = copyLimited(&outBuf, output, opts.MaxOutputBytes, cancel)
 	}()
 
-	waitErr := waitForProcess(ctx, proc, opts.KillAfter)
+	waitErr, canceled := waitForProcess(ctx, proc, opts.KillAfter)
 	closeDone := make(chan struct{})
 	go func() {
 		_ = p.Close()
@@ -89,8 +92,8 @@ func CapturePTY(opts Options, argv []string) (stdout, stderr []byte, err error) 
 	if readErr != nil && waitErr == nil {
 		waitErr = readErr
 	}
-	if ctx.Err() != nil && waitErr == nil {
-		waitErr = ctx.Err()
+	if canceled && parentCtx.Err() != nil && !isLimitError(waitErr) {
+		waitErr = parentCtx.Err()
 	}
 
 	return outBuf.Bytes(), nil, waitErr
@@ -132,7 +135,7 @@ func sendConPTYEOF(input io.Writer) error {
 	return err
 }
 
-func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Duration) error {
+func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Duration) (error, bool) {
 	done := make(chan error, 1)
 	go func() {
 		done <- waitProcess(h)
@@ -140,8 +143,13 @@ func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Durati
 
 	select {
 	case err := <-done:
-		return err
+		return err, false
 	case <-ctx.Done():
+		select {
+		case err := <-done:
+			return err, false
+		default:
+		}
 	}
 
 	if killAfter > 0 {
@@ -149,7 +157,7 @@ func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Durati
 		select {
 		case err := <-done:
 			timer.Stop()
-			return err
+			return err, true
 		case <-timer.C:
 		}
 	}
@@ -159,9 +167,9 @@ func waitForProcess(ctx context.Context, h windows.Handle, killAfter time.Durati
 	defer timer.Stop()
 	select {
 	case err := <-done:
-		return err
+		return err, true
 	case <-timer.C:
-		return ctx.Err()
+		return ctx.Err(), true
 	}
 }
 

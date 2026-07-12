@@ -3,6 +3,8 @@
 package ptycapture
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +14,7 @@ import (
 )
 
 func TestCapturePlain_MergeStderrIntegration(t *testing.T) {
-	stdout, stderr, err := CapturePlain(Options{}, []string{"/bin/sh", "-c", "printf out; printf err 1>&2"})
+	stdout, stderr, err := CapturePlain(context.Background(), Options{}, []string{"/bin/sh", "-c", "printf out; printf err 1>&2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,30 +32,60 @@ func isMaxOutputErr(err error) bool {
 }
 
 func TestCapturePlain_MaxOutputBytes(t *testing.T) {
-	_, _, err := CapturePlain(Options{MaxOutputBytes: 4}, []string{"/bin/sh", "-c", "printf hello"})
+	_, _, err := CapturePlain(context.Background(), Options{MaxOutputBytes: 4}, []string{"/bin/sh", "-c", "printf hello"})
 	if !isMaxOutputErr(err) {
 		t.Fatalf("expected max bytes error, got %v", err)
 	}
 }
 
 func TestCapturePlain_MaxOutputBytesProlificWriter(t *testing.T) {
-	_, _, err := CapturePlain(Options{MaxOutputBytes: 10}, []string{"/bin/sh", "-c", "yes x | head -c 1000000"})
+	_, _, err := CapturePlain(context.Background(), Options{MaxOutputBytes: 10}, []string{"/bin/sh", "-c", "yes x | head -c 1000000"})
 	if !isMaxOutputErr(err) {
 		t.Fatalf("expected max bytes error, got %v", err)
 	}
 }
 
 func TestCapturePTY_MaxOutputBytesProlificWriter(t *testing.T) {
-	_, _, err := CapturePTY(Options{Cols: 80, Rows: 24, MaxOutputBytes: 10}, []string{"/bin/sh", "-c", "yes x | head -c 1000000"})
+	_, _, err := CapturePTY(context.Background(), Options{Cols: 80, Rows: 24, MaxOutputBytes: 10}, []string{"/bin/sh", "-c", "yes x | head -c 1000000"})
 	if !isMaxOutputErr(err) {
 		t.Fatalf("expected max bytes error, got %v", err)
 	}
 }
 
 func TestCapturePlain_Timeout(t *testing.T) {
-	_, _, err := CapturePlain(Options{Timeout: 50 * time.Millisecond}, []string{"/bin/sh", "-c", "sleep 5"})
-	if err == nil {
-		t.Fatal("expected timeout error")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, _, err := CapturePlain(ctx, Options{}, []string{"/bin/sh", "-c", "sleep 5"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline error, got %v", err)
+	}
+}
+
+func TestCapturePlain_ExplicitCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := CapturePlain(ctx, Options{}, []string{"/bin/sh", "-c", "sleep 5"})
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation error, got %v", err)
+	}
+}
+
+func TestCapturePlain_CancellationAfterChildExitDoesNotReplaceSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := time.AfterFunc(50*time.Millisecond, cancel)
+	defer timer.Stop()
+	defer cancel()
+
+	// The background process retains the output pipes after the shell exits, so
+	// cancellation occurs while CapturePlain is performing its bounded drain.
+	_, _, err := CapturePlain(ctx, Options{}, []string{"/bin/sh", "-c", "sleep 1 & exit 0"})
+	if err != nil {
+		t.Fatalf("cancellation after child exit replaced success: %v", err)
 	}
 }
 
@@ -75,7 +107,7 @@ func TestSafeProcessGroup(t *testing.T) {
 func TestCapture_KillAfterStopsDescendantsAfterGrace(t *testing.T) {
 	captureModes := []struct {
 		name    string
-		capture func(Options, []string) ([]byte, []byte, error)
+		capture func(context.Context, Options, []string) ([]byte, []byte, error)
 	}{
 		{name: "plain", capture: CapturePlain},
 		{name: "pty", capture: CapturePTY},
@@ -98,15 +130,12 @@ func TestCapture_KillAfterStopsDescendantsAfterGrace(t *testing.T) {
 		for _, behavior := range parentBehaviors {
 			t.Run(mode.name+"/"+behavior.name, func(t *testing.T) {
 				heartbeat := filepath.Join(t.TempDir(), "heartbeat")
-				opts := Options{
-					Cols:      80,
-					Rows:      24,
-					Timeout:   50 * time.Millisecond,
-					KillAfter: 250 * time.Millisecond,
-				}
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer cancel()
+				opts := Options{Cols: 80, Rows: 24, KillAfter: 250 * time.Millisecond}
 
 				started := time.Now()
-				_, _, err := mode.capture(opts, []string{"/bin/sh", "-c", behavior.script, "sh", heartbeat})
+				_, _, err := mode.capture(ctx, opts, []string{"/bin/sh", "-c", behavior.script, "sh", heartbeat})
 				elapsed := time.Since(started)
 				if err == nil {
 					t.Fatal("expected timeout error")
@@ -135,10 +164,13 @@ func TestCapture_KillAfterStopsDescendantsAfterGrace(t *testing.T) {
 func TestCapturePlain_DrainsLargeOutput(t *testing.T) {
 	const size = 256 << 10
 	for i := range 100 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		stdout, _, err := CapturePlain(
-			Options{Timeout: 5 * time.Second},
+			ctx,
+			Options{},
 			[]string{"/bin/sh", "-c", "head -c 262144 /dev/zero"},
 		)
+		cancel()
 		if err != nil {
 			t.Fatalf("iteration %d: %v", i, err)
 		}

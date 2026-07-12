@@ -2,6 +2,7 @@ package mdpatch
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,7 @@ import (
 )
 
 func defaultOpts(eol EOLMode) PatchOptions {
-	return PatchOptions{EOL: eol, Fence: "text"}
+	return PatchOptions{EOL: eol, Fence: FenceText}
 }
 
 func TestPatchMarkdownFile_EOLHandling(t *testing.T) {
@@ -105,7 +106,7 @@ func TestPatchMarkdownFile_FenceNone(t *testing.T) {
 	if err := os.WriteFile(tmpFile, []byte(base), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opts := PatchOptions{EOL: EOLNone, Fence: "none"}
+	opts := PatchOptions{EOL: EOLNone, Fence: FenceNone}
 	if err := PatchMarkdownFile(tmpFile, []byte("raw line\n"), "T", opts); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestPatchMarkdownFile_CustomFenceLang(t *testing.T) {
 	if err := os.WriteFile(tmpFile, []byte(base), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opts := PatchOptions{EOL: EOLNone, Fence: "go"}
+	opts := PatchOptions{EOL: EOLNone, Fence: Fence("go")}
 	if err := PatchMarkdownFile(tmpFile, []byte("package main\n"), "T", opts); err != nil {
 		t.Fatal(err)
 	}
@@ -261,24 +262,17 @@ func TestPatchMarkdownFile_MarkerErrors(t *testing.T) {
 	}
 }
 
-func TestBuildPatchedContent_CheckMode(t *testing.T) {
-	tmpFile := filepath.Join(t.TempDir(), "check.md")
+func TestPatchBytes_CheckMode(t *testing.T) {
 	base := "a\n<!-- T begin -->\n```text\nold\n```\n<!-- T end -->\nb\n"
-	if err := os.WriteFile(tmpFile, []byte(base), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	current, err := os.ReadFile(tmpFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	same, err := BuildPatchedContent(tmpFile, []byte("old\n"), "T", defaultOpts(EOLNone))
+	current := []byte(base)
+	same, err := PatchBytes(current, []byte("old\n"), "T", defaultOpts(EOLNone))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(current, same) {
 		t.Fatal("expected no change for matching content")
 	}
-	diff, err := BuildPatchedContent(tmpFile, []byte("new\n"), "T", defaultOpts(EOLNone))
+	diff, err := PatchBytes(current, []byte("new\n"), "T", defaultOpts(EOLNone))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,11 +300,35 @@ func TestFenceForContent(t *testing.T) {
 
 func TestParseFence(t *testing.T) {
 	got, err := ParseFence("none")
-	if err != nil || got != "none" {
+	if err != nil || got != FenceNone {
 		t.Fatalf("ParseFence(none) = %q, %v", got, err)
 	}
-	if _, err := ParseFence("bad lang"); err == nil {
-		t.Fatal("expected error for space in fence lang")
+	for _, tag := range []string{"go", "c++", "c#", "objective-c"} {
+		if got, err := ParseFence(tag); err != nil || got != Fence(tag) {
+			t.Fatalf("ParseFence(%q) = %q, %v", tag, got, err)
+		}
+	}
+	if _, err := ParseFence("bad lang"); !errors.Is(err, ErrInvalidFence) {
+		t.Fatalf("expected ErrInvalidFence, got %v", err)
+	}
+}
+
+func TestPatchBytes_ZeroFenceIsText(t *testing.T) {
+	original := []byte("<!-- T begin -->\n<!-- T end -->\n")
+	got, err := PatchBytes(original, []byte("body\n"), "T", PatchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte("```text\nbody\n```")) {
+		t.Fatalf("zero fence did not produce text fence:\n%s", got)
+	}
+}
+
+func TestPatchBytes_ValidatesFenceOnUse(t *testing.T) {
+	original := []byte("<!-- T begin -->\n<!-- T end -->\n")
+	_, err := PatchBytes(original, []byte("body\n"), "T", PatchOptions{Fence: Fence("bad lang")})
+	if !errors.Is(err, ErrInvalidFence) {
+		t.Fatalf("expected ErrInvalidFence, got %v", err)
 	}
 }
 
@@ -318,10 +336,29 @@ func TestValidateMarker(t *testing.T) {
 	if err := ValidateMarker("readme-help"); err != nil {
 		t.Fatalf("valid marker: %v", err)
 	}
-	if err := ValidateMarker("a--b"); err == nil {
-		t.Fatal("expected error for -- in marker")
+	if err := ValidateMarker("a--b"); !errors.Is(err, ErrInvalidMarker) {
+		t.Fatalf("expected ErrInvalidMarker for --, got %v", err)
 	}
-	if err := ValidateMarker("bad name"); err == nil {
-		t.Fatal("expected error for space in marker")
+	if err := ValidateMarker("bad name"); !errors.Is(err, ErrInvalidMarker) {
+		t.Fatalf("expected ErrInvalidMarker for space, got %v", err)
+	}
+}
+
+func TestPatchBytes_ErrorCategories(t *testing.T) {
+	tests := []struct {
+		name     string
+		original string
+		want     error
+	}{
+		{name: "missing", original: "plain\n", want: ErrMarkerNotFound},
+		{name: "duplicate", original: "<!-- T begin -->\n<!-- T begin -->\n<!-- T end -->\n", want: ErrDuplicateMarker},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := PatchBytes([]byte(tt.original), []byte("body\n"), "T", PatchOptions{})
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("error = %v, want category %v", err, tt.want)
+			}
+		})
 	}
 }

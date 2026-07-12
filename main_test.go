@@ -287,7 +287,7 @@ func TestPatchCheckOutputFile(t *testing.T) {
 	})
 }
 
-func TestPatchDryRunOutputFileRemainsNoWrite(t *testing.T) {
+func TestPatchRejectsDryRunWithOutputFile(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "README.md")
 	output := filepath.Join(dir, "help.txt")
@@ -298,11 +298,14 @@ func TestPatchDryRunOutputFileRemainsNoWrite(t *testing.T) {
 	}
 
 	stdout, stderr, code := runBuiltCommand(t, patchVersionArgs(target, output, "-dry-run", "-fence=none")...)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2\nstderr=%s", code, stderr)
 	}
-	if len(stdout) == 0 {
-		t.Fatal("dry-run did not print the stale target")
+	if len(stdout) != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(string(stderr), "-dry-run and -o cannot be used together") {
+		t.Fatalf("stderr = %q, want flag conflict", stderr)
 	}
 	if got := string(readTestFile(t, target)); got != markerFileBase {
 		t.Fatalf("dry-run modified target:\n%s", got)
@@ -313,7 +316,7 @@ func TestPatchDryRunOutputFileRemainsNoWrite(t *testing.T) {
 }
 
 func TestPatchRejectsAliasedOutput(t *testing.T) {
-	for _, mode := range []string{"write", "check", "dry_run"} {
+	for _, mode := range []string{"write", "check"} {
 		t.Run(mode, func(t *testing.T) {
 			target := filepath.Join(t.TempDir(), "README.md")
 			writeMarkerFile(t, target)
@@ -321,20 +324,48 @@ func TestPatchRejectsAliasedOutput(t *testing.T) {
 			switch mode {
 			case "check":
 				args = append(args, "-check")
-			case "dry_run":
-				args = append(args, "-dry-run")
 			}
 			args = append(args, "--", filepath.Join(t.TempDir(), "missing-command"))
 
 			_, stderr, code := runBuiltCommand(t, args...)
-			if code != 1 {
-				t.Fatalf("exit code = %d, want 1\nstderr=%s", code, stderr)
+			if code != 2 {
+				t.Fatalf("exit code = %d, want 2\nstderr=%s", code, stderr)
 			}
 			if !strings.Contains(string(stderr), "-file and -o must refer to different files") {
 				t.Fatalf("stderr = %q, want alias error", stderr)
 			}
 			if got := string(readTestFile(t, target)); got != markerFileBase {
 				t.Fatalf("aliased output changed target:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestUsageErrorsExitTwo(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "README.md")
+	writeMarkerFile(t, target)
+
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		message string
+	}{
+		{name: "missing_subcommand", message: "usage:"},
+		{name: "unknown_subcommand", args: []string{"unknown"}, message: "unknown subcommand"},
+		{name: "run_missing_command", args: []string{"run"}, message: "missing command"},
+		{name: "invalid_eol", args: []string{"run", "-normalize-eol=invalid", "--", testBinaryPath, "version"}, message: "invalid EOL mode"},
+		{name: "stderr_combined_conflict", args: []string{"run", "-stderr=merge", "-combined", "--", testBinaryPath, "version"}, message: "cannot be used together"},
+		{name: "kill_after_without_timeout", args: []string{"run", "-kill-after=0", "--", testBinaryPath, "version"}, message: "requires a positive -timeout"},
+		{name: "kill_after_with_zero_timeout", args: []string{"run", "-timeout=0", "-kill-after=1s", "--", testBinaryPath, "version"}, message: "requires a positive -timeout"},
+		{name: "invalid_marker", args: []string{"patch", "-file", target, "-marker", "bad marker", "--", filepath.Join(t.TempDir(), "missing-command")}, message: "invalid marker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, code := runBuiltCommand(t, tc.args...)
+			if code != 2 {
+				t.Fatalf("exit code = %d, want 2\nstdout=%s\nstderr=%s", code, stdout, stderr)
+			}
+			if !strings.Contains(string(stderr), tc.message) {
+				t.Fatalf("stderr = %q, want %q", stderr, tc.message)
 			}
 		})
 	}

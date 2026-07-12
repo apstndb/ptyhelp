@@ -3,6 +3,7 @@ package mdpatch
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,17 @@ import (
 // scannerMaxLine is the maximum bytes per line when scanning Markdown.
 const scannerMaxLine = 16 << 20
 
+var (
+	// ErrMarkerNotFound indicates that a complete marker block was not found.
+	ErrMarkerNotFound = errors.New("marker block not found")
+	// ErrDuplicateMarker indicates that a marker line occurs more than once.
+	ErrDuplicateMarker = errors.New("duplicate marker")
+	// ErrInvalidMarker indicates that a marker name cannot be represented safely.
+	ErrInvalidMarker = errors.New("invalid marker")
+	// ErrInvalidFence indicates that a fence language tag is invalid.
+	ErrInvalidFence = errors.New("invalid fence")
+)
+
 func newLineScanner(r io.Reader) *bufio.Scanner {
 	s := bufio.NewScanner(r)
 	s.Buffer(make([]byte, 0, 64*1024), scannerMaxLine)
@@ -23,70 +35,79 @@ func newLineScanner(r io.Reader) *bufio.Scanner {
 // PatchOptions configures marker-block replacement.
 type PatchOptions struct {
 	EOL   EOLMode
-	Fence string // "text", "none", or a fenced-code language tag (e.g. "go")
+	Fence Fence
 }
 
+// Fence controls fenced-code wrapping. Its zero value is FenceText.
+type Fence string
+
+const (
+	// FenceText emits a fenced code block tagged as text.
+	FenceText Fence = "text"
+	// FenceNone emits replacement content without a fenced code block.
+	FenceNone Fence = "none"
+)
+
 // ParseFence parses -fence values: text, none, or a language tag.
-func ParseFence(s string) (string, error) {
+func ParseFence(s string) (Fence, error) {
 	if s == "" {
-		return "text", nil
+		return FenceText, nil
 	}
 	if s == "text" || s == "none" {
-		return s, nil
+		return Fence(s), nil
 	}
 	for _, r := range s {
-		if r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_') {
+		if r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("-_+#.", r)) {
 			continue
 		}
-		return "", fmt.Errorf("invalid fence value %q (valid: text, none, or a language tag)", s)
+		return "", fmt.Errorf("%w value %q (valid: text, none, or a language tag)", ErrInvalidFence, s)
 	}
-	return s, nil
+	return Fence(s), nil
 }
 
 // ValidateMarker checks that marker is safe to embed in HTML comment markers.
 func ValidateMarker(marker string) error {
 	if marker == "" {
-		return fmt.Errorf("empty marker")
+		return fmt.Errorf("%w: empty name", ErrInvalidMarker)
 	}
 	if strings.Contains(marker, "--") {
-		return fmt.Errorf("invalid marker %q (must not contain --)", marker)
+		return fmt.Errorf("%w %q (must not contain --)", ErrInvalidMarker, marker)
 	}
 	for _, r := range marker {
 		if r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '.' || r == ':' || r == '-') {
 			continue
 		}
-		return fmt.Errorf("invalid marker %q (use letters, digits, _, ., :, -)", marker)
+		return fmt.Errorf("%w %q (use letters, digits, _, ., :, -)", ErrInvalidMarker, marker)
 	}
 	return nil
 }
 
-// BuildPatchedContent returns the file bytes after replacing the marker block
-// without writing to disk.
-func BuildPatchedContent(path string, data []byte, marker string, opts PatchOptions) ([]byte, error) {
+// PatchBytes returns original after replacing the marker block with replacement,
+// without performing file I/O.
+func PatchBytes(original, replacement []byte, marker string, opts PatchOptions) ([]byte, error) {
 	if err := ValidateMarker(marker); err != nil {
+		return nil, err
+	}
+	fence, err := ParseFence(string(opts.Fence))
+	if err != nil {
 		return nil, err
 	}
 	begin := fmt.Sprintf("<!-- %s begin -->", marker)
 	end := fmt.Sprintf("<!-- %s end -->", marker)
 
-	orig, err := os.ReadFile(path)
+	hasCRLF, hasBareLF := detectEOLStyle(original)
+
+	bi, ei, err := markerLineIndices(original, begin, end)
 	if err != nil {
 		return nil, err
 	}
 
-	hasCRLF, hasBareLF := detectEOLStyle(orig)
-
-	bi, ei, err := markerLineIndices(path, orig, begin, end)
-	if err != nil {
-		return nil, err
-	}
-
-	normalized := NormalizeEOL(data, EOLLF)
+	normalized := NormalizeEOL(replacement, EOLLF)
 	textStr := string(bytes.TrimRight(normalized, "\n"))
-	middle := buildMiddleLines(textStr, opts.Fence)
+	middle := buildMiddleLines(textStr, fence)
 
 	var b strings.Builder
-	sc := newLineScanner(bytes.NewReader(orig))
+	sc := newLineScanner(bytes.NewReader(original))
 	n := 0
 	for sc.Scan() {
 		line := sc.Text()
@@ -131,24 +152,28 @@ func BuildPatchedContent(path string, data []byte, marker string, opts PatchOpti
 // PatchMarkdownFile replaces the lines strictly between <!-- marker begin -->
 // and <!-- marker end --> with fenced or raw content per opts.Fence.
 func PatchMarkdownFile(path string, out []byte, marker string, opts PatchOptions) error {
-	content, err := BuildPatchedContent(path, out, marker, opts)
+	original, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	content, err := PatchBytes(original, out, marker, opts)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	return atomicWriteFile(path, content)
 }
 
-func buildMiddleLines(textStr, fence string) []string {
+func buildMiddleLines(textStr string, fence Fence) []string {
 	var textLines []string
 	if textStr != "" {
 		textLines = strings.Split(textStr, "\n")
 	}
-	if fence == "none" {
+	if fence == FenceNone {
 		return textLines
 	}
-	lang := fence
-	if lang == "" || lang == "text" {
-		lang = "text"
+	lang := string(fence)
+	if lang == "" || fence == FenceText {
+		lang = string(FenceText)
 	}
 	f := fenceForContent(textStr)
 	openFence := f + lang
@@ -196,7 +221,7 @@ func fenceForContent(s string) string {
 	return strings.Repeat("`", n)
 }
 
-func markerLineIndices(path string, data []byte, begin, end string) (bi, ei int, err error) {
+func markerLineIndices(data []byte, begin, end string) (bi, ei int, err error) {
 	bi, ei = -1, -1
 	sc := newLineScanner(bytes.NewReader(data))
 	n := 0
@@ -209,17 +234,17 @@ func markerLineIndices(path string, data []byte, begin, end string) (bi, ei int,
 		case bytes.Equal(trimmed, beginBytes):
 			if bi >= 0 {
 				if ei >= 0 {
-					return -1, -1, fmt.Errorf("%s: duplicate marker block %q", path, begin)
+					return -1, -1, fmt.Errorf("%w: duplicate marker block %q", ErrDuplicateMarker, begin)
 				}
-				return -1, -1, fmt.Errorf("%s: duplicate begin marker %q", path, begin)
+				return -1, -1, fmt.Errorf("%w: duplicate begin marker %q", ErrDuplicateMarker, begin)
 			}
 			bi = n
 		case bytes.Equal(trimmed, endBytes):
 			if bi < 0 {
-				return -1, -1, fmt.Errorf("%s: %q … %q block not found or invalid order", path, begin, end)
+				return -1, -1, fmt.Errorf("%w or invalid order: %q … %q", ErrMarkerNotFound, begin, end)
 			}
 			if ei >= 0 {
-				return -1, -1, fmt.Errorf("%s: duplicate end marker %q", path, end)
+				return -1, -1, fmt.Errorf("%w: duplicate end marker %q", ErrDuplicateMarker, end)
 			}
 			ei = n
 		}
@@ -229,7 +254,7 @@ func markerLineIndices(path string, data []byte, begin, end string) (bi, ei int,
 		return -1, -1, scanErr
 	}
 	if bi < 0 || ei < 0 || ei <= bi {
-		return -1, -1, fmt.Errorf("%s: %q … %q block not found or invalid order", path, begin, end)
+		return -1, -1, fmt.Errorf("%w or invalid order: %q … %q", ErrMarkerNotFound, begin, end)
 	}
 	return bi, ei, nil
 }

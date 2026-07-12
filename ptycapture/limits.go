@@ -25,9 +25,13 @@ func copyLimited(dst *bytes.Buffer, src io.Reader, max int64, cancel context.Can
 
 func preferLimitError(waitErr, outErr, errErr error) error {
 	for _, err := range []error{outErr, errErr} {
-		if err != nil && strings.Contains(err.Error(), "exceeded") {
+		if isLimitError(err) {
 			return err
 		}
 	}
 	return waitErr
+}
+
+func isLimitError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "exceeded")
 }
