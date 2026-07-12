@@ -27,7 +27,7 @@ import (
 func main() {
 	if len(os.Args) < 2 {
 		usage(os.Stderr)
-		os.Exit(1)
+		os.Exit(2)
 	}
 	switch os.Args[1] {
 	case "run":
@@ -42,7 +42,7 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "ptyhelp: unknown subcommand %q\n\n", os.Args[1])
 		usage(os.Stderr)
-		os.Exit(1)
+		os.Exit(2)
 	}
 }
 
@@ -119,9 +119,16 @@ func writeOptionalStdoutFile(prefix string, stdout []byte, outPath string) {
 	}
 }
 
-func exitWithError(prefix string, err error) {
+func exitWithUsageError(prefix string, err error) {
 	fmt.Fprintf(os.Stderr, "%s: %v\n", prefix, err)
-	os.Exit(1)
+	os.Exit(2)
+}
+
+func exitUsagef(prefix, format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "%s: ", prefix)
+	fmt.Fprintf(os.Stderr, format, args...)
+	fmt.Fprintln(os.Stderr)
+	os.Exit(2)
 }
 
 func subcommandHelpOnly(fs *flag.FlagSet, args []string) {
@@ -173,10 +180,24 @@ type captureFlags struct {
 }
 
 func finalizeCaptureFlags(fs *flag.FlagSet, f *captureFlags, stderrStr *string, combined *bool, timeoutStr, killAfterStr *string, maxOut *int64) {
+	var stderrSet, combinedSet, killAfterSet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "stderr":
+			stderrSet = true
+		case "combined":
+			combinedSet = true
+		case "kill-after":
+			killAfterSet = true
+		}
+	})
+	if stderrSet && combinedSet {
+		exitUsagef(fs.Name(), "-stderr and -combined cannot be used together")
+	}
+
 	mode, err := ptycapture.ParseStderrMode(*stderrStr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Name(), err)
-		os.Exit(1)
+		exitWithUsageError(fs.Name(), err)
 	}
 	f.stderrMode = mode
 	if *combined {
@@ -185,22 +206,22 @@ func finalizeCaptureFlags(fs *flag.FlagSet, f *captureFlags, stderrStr *string, 
 	if *timeoutStr != "" {
 		d, err := parseDurationFlag("timeout", *timeoutStr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Name(), err)
-			os.Exit(1)
+			exitWithUsageError(fs.Name(), err)
 		}
 		f.timeout = d
 	}
 	if *killAfterStr != "" {
 		d, err := parseDurationFlag("kill-after", *killAfterStr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", fs.Name(), err)
-			os.Exit(1)
+			exitWithUsageError(fs.Name(), err)
 		}
 		f.killAfter = d
 	}
 	if *maxOut < 0 {
-		fmt.Fprintf(os.Stderr, "%s: -max-output-bytes must be >= 0\n", fs.Name())
-		os.Exit(1)
+		exitUsagef(fs.Name(), "-max-output-bytes must be >= 0")
+	}
+	if killAfterSet && f.timeout <= 0 {
+		exitUsagef(fs.Name(), "-kill-after requires a positive -timeout")
 	}
 	f.maxOutputBytes = *maxOut
 }
@@ -260,16 +281,15 @@ Runs the command in a pseudo-terminal with the given size (Unix: stdout and stde
 
 	eol, err := mdpatch.ParseEOLMode(*normEOL)
 	if err != nil {
-		exitWithError("ptyhelp run", err)
+		exitWithUsageError("ptyhelp run", err)
 	}
 	if err := validatePTYSize(*cols, *rows); err != nil {
-		exitWithError("ptyhelp run", err)
+		exitWithUsageError("ptyhelp run", err)
 	}
 
 	argv := fs.Args()
 	if len(argv) == 0 {
-		fmt.Fprintf(os.Stderr, "ptyhelp run: missing command (example: ptyhelp run -- go run . --help)\n")
-		os.Exit(1)
+		exitUsagef("ptyhelp run", "missing command (example: ptyhelp run -- go run . --help)")
 	}
 
 	stdout, stderr, err := capFlags.capturePTY(*cols, *rows, argv)
@@ -294,7 +314,7 @@ func cmdPatch(args []string) {
 	file := fs.String("file", "", "markdown file to patch (required)")
 	marker := fs.String("marker", "cli-output", "HTML comment name between <!-- NAME begin --> and <!-- NAME end -->")
 	fenceStr := fs.String("fence", "text", "fenced code block language: text, none, or a language tag")
-	outPath := fs.String("o", "", "also write child stdout on success; -check verifies it and -dry-run does not write it")
+	outPath := fs.String("o", "", "also write child stdout on success; -check verifies it; incompatible with -dry-run")
 	normEOL := fs.String("normalize-eol", "none", "normalize line endings in the entire target file: none, lf, crlf")
 	check := fs.Bool("check", false, "exit 1 when the target file or -o output would change (CI staleness check)")
 	dryRun := fs.Bool("dry-run", false, "print the patched file to stdout when it would change; write neither it nor -o")
@@ -313,7 +333,7 @@ Child stderr is copied to stderr when separated (e.g. on Unix or non-PTY mode).
 The target file is not modified when the child exits non-zero.
 The -file target and -o output must refer to different files.
 With -check, -o is also checked for staleness and no files are written.
-With -dry-run, -o is accepted but not written; this combination will become an error in v0.3.
+With -dry-run, -o is rejected because dry-run output is reserved for the patched file.
 Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 `)
@@ -326,11 +346,14 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 
 	eol, err := mdpatch.ParseEOLMode(*normEOL)
 	if err != nil {
-		exitWithError("ptyhelp patch", err)
+		exitWithUsageError("ptyhelp patch", err)
 	}
 	fence, err := mdpatch.ParseFence(*fenceStr)
 	if err != nil {
-		exitWithError("ptyhelp patch", err)
+		exitWithUsageError("ptyhelp patch", err)
+	}
+	if err := mdpatch.ValidateMarker(*marker); err != nil {
+		exitWithUsageError("ptyhelp patch", err)
 	}
 
 	var colsSet, rowsSet, ptyVisited bool
@@ -346,8 +369,7 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	})
 
 	if ptyVisited && !*ptyFlag && (colsSet || rowsSet) {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: -cols and -rows require a PTY; remove -pty=false\n")
-		os.Exit(1)
+		exitUsagef("ptyhelp patch", "-cols and -rows require a PTY; remove -pty=false")
 	}
 
 	var runInPTY bool
@@ -358,29 +380,27 @@ Note: in PTY mode on non-Unix platforms, stderr is typically merged into stdout.
 	}
 
 	if *file == "" {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: -file is required\n")
-		os.Exit(1)
+		exitUsagef("ptyhelp patch", "-file is required")
+	}
+	if *dryRun && *outPath != "" {
+		exitUsagef("ptyhelp patch", "-dry-run and -o cannot be used together")
 	}
 	aliased, aliasErr := pathsReferToSameFile(*file, *outPath)
 	if aliasErr != nil {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", aliasErr)
-		os.Exit(1)
+		exitWithUsageError("ptyhelp patch", aliasErr)
 	}
 	if aliased {
-		fmt.Fprintln(os.Stderr, "ptyhelp patch: -file and -o must refer to different files")
-		os.Exit(1)
+		exitUsagef("ptyhelp patch", "-file and -o must refer to different files")
 	}
 
 	argv := fs.Args()
 	if len(argv) == 0 {
-		fmt.Fprintf(os.Stderr, "ptyhelp patch: missing command (example: ptyhelp patch -file README.md -marker x -pty -- go run . --help)\n")
-		os.Exit(1)
+		exitUsagef("ptyhelp patch", "missing command (example: ptyhelp patch -file README.md -marker x -pty -- go run . --help)")
 	}
 
 	if runInPTY {
 		if err := validatePTYSize(*cols, *rows); err != nil {
-			fmt.Fprintf(os.Stderr, "ptyhelp patch: %v\n", err)
-			os.Exit(1)
+			exitWithUsageError("ptyhelp patch", err)
 		}
 	}
 

@@ -11,7 +11,7 @@ type StderrMode int
 const (
 	// StderrSeparate keeps stdout and stderr in separate slices.
 	StderrSeparate StderrMode = iota
-	// StderrMerge appends stderr bytes onto stdout.
+	// StderrMerge appends stderr bytes after stdout without preserving temporal ordering.
 	StderrMerge
 	// StderrDiscard drops captured stderr.
 	StderrDiscard
@@ -31,7 +31,8 @@ func ParseStderrMode(s string) (StderrMode, error) {
 	}
 }
 
-// ApplyStderrMode merges or discards stderr per mode.
+// ApplyStderrMode merges or discards stderr per mode. Merge appends the complete
+// stderr stream after stdout; it does not preserve the streams' temporal ordering.
 func ApplyStderrMode(stdout, stderr []byte, mode StderrMode) ([]byte, []byte) {
 	switch mode {
 	case StderrMerge:
